@@ -3,7 +3,11 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node dist/index.js",
+    "dev": "npx ts-node-dev --respawn --transpile-only --files src/index.ts",
+    "build": "tsc",
+    "lint": "eslint . --ext .ts",
+    "format": "prettier --write \"src/**/*.ts\""
   },
   "keywords": [],
   "author": "",
@@ -17,13 +21,16 @@
     "globals": "^16.0.0",
     "prettier": "^3.5.3",
     "ts-node": "^10.9.2",
+    "ts-node-dev": "^2.0.0",
     "typescript": "^5.8.2",
     "typescript-eslint": "^8.26.1"
   },
   "dependencies": {
+    "@types/pusher-js": "^4.2.2",
     "axios": "^1.8.3",
     "dotenv": "^16.4.7",
     "pusher": "^5.2.0",
+    "pusher-js": "^8.4.0",
     "telegraf": "^4.16.3"
   }
 }
