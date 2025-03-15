@@ -1,4 +1,4 @@
-import { Telegraf, session } from 'telegraf';
+import { Telegraf, session, Markup } from 'telegraf';
 import { AuthRoute } from './modules/auth/auth.route';
 import { KycRoute } from './modules/kyc/kyc.route';
 import { WalletRoute } from './modules/wallet/wallet.route';
@@ -8,10 +8,13 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { TransferRoute } from './modules/transfer/transfer.route';
 import { NotificationsService } from './modules/notifications/notifications.service';
+import { MenuService } from './modules/menu/menu.service';
+import { Message } from 'telegraf/types';
 
 export class App {
     private bot: Bot;
     private notificationsService: NotificationsService;
+    private menuService: MenuService;
     private isShuttingDown: boolean = false;
     private readonly SESSION_FILE = path.join(__dirname, '../.sessions.json');
     private sessions: { [key: string]: SessionData } = {};
@@ -22,6 +25,7 @@ export class App {
         }
         this.bot = new Telegraf<Context>(CONFIG.TELEGRAM.BOT_TOKEN);
         this.notificationsService = new NotificationsService(this.bot);
+        this.menuService = new MenuService(this.bot);
         this.loadSessions();
         this.initializeMiddlewares();
         this.initializeModules();
@@ -110,14 +114,20 @@ export class App {
         new WalletRoute(this.bot);
         new TransferRoute(this.bot);
         
-        // Subscribe to notifications after successful login
-        this.bot.on('text', async (ctx) => {
-            if (ctx.session.accessToken && ctx.session.organizationId) {
-                this.notificationsService.subscribeToDeposits(
-                    ctx.session.organizationId,
-                    ctx.chat.id,
-                    ctx.session.accessToken
-                );
+        // Initialize menu system
+        this.bot.command('menu', (ctx) => this.menuService.showMainMenu(ctx));
+        this.bot.command('start', (ctx) => this.menuService.showWelcomeMessage(ctx));
+        
+        // Handle menu actions
+        this.bot.action(/^menu_.*/, (ctx) => this.menuService.handleMenuAction(ctx));
+        this.bot.action(/^(wallet|transfer|kyc|account)_.*/, (ctx) => {
+            this.menuService.handleMenuAction(ctx);
+        });
+        
+        // Handle text messages
+        this.bot.on('text', (ctx) => {
+            if (ctx.message && 'text' in ctx.message) {
+                this.menuService.handleNaturalLanguage(ctx, ctx.message.text);
             }
         });
     }
