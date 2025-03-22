@@ -24,9 +24,11 @@ export const MENUS = {
         title: '💰 Wallet Menu\nManage your wallet:',
         options: [
             { text: '💵 Check Balance', callback: 'wallet_balance' },
+            { text: '💰 All Balances', callback: 'wallet_all_balances' },
+            { text: '🪙 Token Balance', callback: 'wallet_token_balance' },
             { text: '📊 View History', callback: 'wallet_history' },
-            { text: '📥 Deposit', callback: 'wallet_deposit' },
             { text: '🔄 Set Default', callback: 'wallet_set_default' },
+            { text: '🌐 Networks', callback: 'wallet_networks' },
             { text: '⬅️ Back to Main', callback: 'menu_main' }
         ]
     },
@@ -74,12 +76,6 @@ export const NATURAL_LANGUAGE_PATTERNS = {
         'pay',
         'send money',
         'payment'
-    ],
-    DEPOSIT: [
-        'deposit',
-        'add funds',
-        'receive',
-        'add money'
     ],
     KYC: [
         'kyc',

@@ -15,9 +15,13 @@ export class App {
     private bot: Bot;
     private notificationsService: NotificationsService;
     private menuService: MenuService;
+    private modules: any[] = [];
+    private transferRoute: TransferRoute | undefined;
     private isShuttingDown: boolean = false;
     private readonly SESSION_FILE = path.join(__dirname, '../.sessions.json');
     private sessions: { [key: string]: SessionData } = {};
+    private readonly MAX_RETRIES = 3;
+    private readonly RETRY_DELAY = 5000; // 5 seconds
 
     constructor() {
         if (!CONFIG.TELEGRAM.BOT_TOKEN) {
@@ -29,6 +33,7 @@ export class App {
         this.loadSessions();
         this.initializeMiddlewares();
         this.initializeModules();
+        this.setupErrorHandling();
         this.setupShutdown();
     }
 
@@ -109,11 +114,55 @@ export class App {
     }
 
     private initializeModules(): void {
-        new AuthRoute(this.bot);
-        new KycRoute(this.bot);
-        new WalletRoute(this.bot);
-        new TransferRoute(this.bot);
+        // Initialize modules first
+        this.modules = [
+            new AuthRoute(this.bot),
+            new KycRoute(this.bot),
+            new WalletRoute(this.bot),
+            new TransferRoute(this.bot)
+        ];
         
+        // Store TransferRoute instance
+        this.transferRoute = this.modules.find(
+            (module): module is TransferRoute => module instanceof TransferRoute
+        );
+
+        // THEN set up text handler
+        this.bot.on('text', async (ctx) => {
+            console.log('\n🔍 === APP TEXT HANDLER START ===');
+            if (ctx.message && 'text' in ctx.message) {
+                const userId = ctx.from?.id;
+                console.log('📩 Message received:', {
+                    userId,
+                    text: ctx.message.text,
+                    from: ctx.from?.username,
+                    messageId: ctx.message.message_id
+                });
+
+                if (!userId) {
+                    console.log('❌ No userId found, skipping');
+                    return;
+                }
+
+                const hasActiveTransfer = this.transferRoute?.hasActiveTransfer(userId);
+                console.log('🔄 Transfer state check:', {
+                    hasTransferRoute: !!this.transferRoute,
+                    hasActiveTransfer,
+                    userId
+                });
+
+                if (hasActiveTransfer && this.transferRoute) {
+                    console.log('➡️ Delegating to transfer handler');
+                    await this.transferRoute.handleTextMessage(ctx);
+                    return;
+                }
+                
+                console.log('➡️ Delegating to menu handler');
+                await this.menuService.handleNaturalLanguage(ctx, ctx.message.text);
+            }
+            console.log('=== APP TEXT HANDLER END ===\n');
+        });
+
         // Initialize menu system
         this.bot.command('menu', (ctx) => this.menuService.showMainMenu(ctx));
         this.bot.command('start', (ctx) => this.menuService.showWelcomeMessage(ctx));
@@ -123,11 +172,35 @@ export class App {
         this.bot.action(/^(wallet|transfer|kyc|account)_.*/, (ctx) => {
             this.menuService.handleMenuAction(ctx);
         });
-        
-        // Handle text messages
-        this.bot.on('text', (ctx) => {
-            if (ctx.message && 'text' in ctx.message) {
-                this.menuService.handleNaturalLanguage(ctx, ctx.message.text);
+    }
+
+    private setupErrorHandling(): void {
+        // Global error handler for updates
+        this.bot.catch((error: unknown, ctx) => {
+            console.error('Error while handling update:', error);
+            
+            // Type guard for Error
+            if (error instanceof Error && 
+                (error.message.includes('query is too old') || 
+                error.message.includes('query ID is invalid'))) {
+                // Handle expired callback queries gracefully
+                if (ctx.callbackQuery) {
+                    ctx.answerCbQuery()
+                        .catch((e: Error) => console.error('Failed to answer callback query:', e));
+                    
+                    // Type guard for callback query data
+                    if ('data' in ctx.callbackQuery && ctx.callbackQuery.data?.startsWith('menu_')) {
+                        this.menuService.showMainMenu(ctx)
+                            .catch((e: Error) => console.error('Failed to refresh menu:', e));
+                    }
+                }
+                return;
+            }
+
+            // For other errors, notify the user
+            if (ctx.chat) {
+                ctx.reply('❌ An error occurred. Please try again.')
+                    .catch((e: Error) => console.error('Failed to send error message:', e));
             }
         });
     }
@@ -150,13 +223,23 @@ export class App {
         process.once('SIGUSR2', cleanup);
     }
 
-    public async start(): Promise<void> {
+    public async start(retryCount = 0): Promise<void> {
         try {
-            await this.bot.launch();
+            await this.bot.launch({
+                dropPendingUpdates: true,
+                allowedUpdates: ['message', 'callback_query']
+            });
             console.log('🤖 Telegram bot is running...');
         } catch (error) {
             console.error('Failed to start bot:', error);
-            process.exit(1);
+            
+            if (retryCount < this.MAX_RETRIES) {
+                console.log(`Retrying in ${this.RETRY_DELAY/1000} seconds... (Attempt ${retryCount + 1}/${this.MAX_RETRIES})`);
+                await new Promise(resolve => setTimeout(resolve, this.RETRY_DELAY));
+                return this.start(retryCount + 1);
+            } else {
+                throw new Error(`Failed to start bot after ${this.MAX_RETRIES} attempts`);
+            }
         }
     }
 }

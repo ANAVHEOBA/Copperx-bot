@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { CONFIG } from '../../config/env';
-import { Wallet, WalletBalance, SetDefaultWalletRequest, ErrorResponseDto, TokenBalance, RecoverTokensRequest } from './wallet.schema';
+import { Wallet, WalletBalance, SetDefaultWalletRequest, ErrorResponseDto, TokenBalance, RecoverTokensRequest, WalletWithBalances } from './wallet.schema';
 
 export class WalletCrud {
     static async getWallets(accessToken: string): Promise<Wallet[]> {
@@ -174,6 +174,31 @@ export class WalletCrud {
                     statusCode: error.response?.status || 500,
                     error: error.response?.data?.error || error.message
                 };
+            }
+            throw error;
+        }
+    }
+
+    static async getAllWalletBalances(accessToken: string): Promise<WalletWithBalances[]> {
+        try {
+            const response = await axios.get<WalletWithBalances[]>(
+                `${CONFIG.API.BASE_URL}/api/wallets/balances`,
+                {
+                    headers: {
+                        'Authorization': `Bearer ${accessToken}`
+                    }
+                }
+            );
+            return response.data;
+        } catch (error) {
+            if (axios.isAxiosError(error)) {
+                console.error('Wallet Balances Error:', error.response?.data);
+                const errorResponse: ErrorResponseDto = {
+                    message: error.response?.data?.message || 'Failed to fetch wallet balances',
+                    statusCode: error.response?.status || 500,
+                    error: error.response?.data?.error || error.message
+                };
+                throw errorResponse;
             }
             throw error;
         }

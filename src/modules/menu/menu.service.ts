@@ -3,6 +3,8 @@ import { Markup } from 'telegraf';
 import { MENUS, NATURAL_LANGUAGE_PATTERNS, LOGIN_STATES } from './menu.config';
 import { SessionManager } from '../../utils/session-manager';
 import { AuthCrud } from '../auth/auth.crud';
+import { WalletController } from '../wallet/wallet.controller';
+import { TransferController } from '../transfer/transfer.controller';
 
 export class MenuService {
     private userStates: Map<number, string> = new Map();
@@ -97,18 +99,7 @@ export class MenuService {
         const userId = ctx.from?.id;
         if (!userId) return;
 
-        await ctx.answerCbQuery(); // Always acknowledge the callback query first
-
-        // Special handling for login and help
-        if (action === 'start_login' || action === 'menu_help') {
-            if (action === 'start_login') {
-                await this.startLoginFlow(ctx, userId);
-            } else {
-                // Handle help menu
-                await ctx.reply('Help information here...');
-            }
-            return;
-        }
+        await ctx.answerCbQuery(); // Always acknowledge the callback query
 
         // Check login status
         const isLoggedIn = await SessionManager.getToken(ctx);
@@ -118,21 +109,36 @@ export class MenuService {
             return;
         }
 
-        // Handle back to main menu
-        if (action === 'menu_main') {
-            await this.showMainMenu(ctx);
-            return;
-        }
-
-        // Handle other menu actions
-        const menu = this.getMenuFromAction(action);
-        if (menu) {
-            const keyboard = Markup.inlineKeyboard(
-                this.createButtonRows(menu.options)
-            );
-            await ctx.editMessageText(menu.title, keyboard);
-        } else {
-            await this.handleSpecificAction(ctx, action);
+        try {
+            // Handle specific menu actions
+            switch (action) {
+                case 'menu_wallet':
+                    const keyboard = Markup.inlineKeyboard(
+                        this.createButtonRows(MENUS.WALLET.options)
+                    );
+                    await ctx.editMessageText(MENUS.WALLET.title, keyboard);
+                    break;
+                case 'menu_main':
+                    await this.showMainMenu(ctx);
+                    break;
+                default:
+                    // Handle other menu actions
+                    const menu = this.getMenuFromAction(action);
+                    if (menu) {
+                        const keyboard = Markup.inlineKeyboard(
+                            this.createButtonRows(menu.options)
+                        );
+                        await ctx.editMessageText(menu.title, keyboard);
+                    }
+            }
+        } catch (error: any) {
+            // Handle message not modified error gracefully
+            if (error.description?.includes('message is not modified')) {
+                console.log('Message content unchanged, skipping update');
+                return;
+            }
+            console.error('Menu action error:', error);
+            await ctx.reply('❌ An error occurred. Please try again.');
         }
     }
 
@@ -150,7 +156,6 @@ export class MenuService {
     }
 
     private async handleSpecificAction(ctx: Context, action: string): Promise<void> {
-        // Check login status first
         const isLoggedIn = await SessionManager.getToken(ctx);
         if (!isLoggedIn) {
             await this.showStartMenu(ctx);
@@ -159,19 +164,65 @@ export class MenuService {
 
         await ctx.answerCbQuery();
         
-        switch (action) {
-            case 'wallet_balance':
-                await ctx.reply('📊 Fetching your balance...');
-                break;
-            case 'transfer_email':
-                await ctx.reply('📧 Please enter recipient email and amount:\nFormat: email@example.com 100 USDC');
-                break;
-            case 'kyc_submit':
-                await ctx.reply('📝 Please upload your identification document');
-                break;
-            // Add other specific actions
-            default:
-                await ctx.reply('🔄 Processing your request...');
+        try {
+            switch (action) {
+                case 'wallet_balance':
+                    await ctx.editMessageText('📊 Fetching your balance...');
+                    const walletController = new WalletController();
+                    await walletController.handleWalletBalance(ctx);
+                    break;
+                case 'wallet_all_balances':
+                    await ctx.editMessageText('💰 Fetching all wallet balances...');
+                    const allBalancesController = new WalletController();
+                    await allBalancesController.handleAllWalletBalances(ctx);
+                    break;
+                case 'wallet_token_balance':
+                    await ctx.editMessageText('🪙 Loading token balance menu...');
+                    const tokenBalanceController = new WalletController();
+                    await tokenBalanceController.handleTokenBalanceMenu(ctx);
+                    break;
+                case 'wallet_history':
+                    await ctx.editMessageText('📋 Fetching your wallet history...');
+                    const historyController = new WalletController();
+                    await historyController.handleWalletList(ctx);
+                    break;
+                case 'wallet_set_default':
+                    await ctx.editMessageText('🔄 Loading wallet selection...');
+                    const defaultController = new WalletController();
+                    await defaultController.handleSetDefaultWallet(ctx);
+                    break;
+                case 'wallet_networks':
+                    await ctx.editMessageText('🌐 Fetching supported networks...');
+                    const networksController = new WalletController();
+                    await networksController.handleNetworks(ctx);
+                    break;
+                case 'transfer_email':
+                    console.log('Starting email transfer flow'); // Debug log
+                    await ctx.editMessageText('📧 Starting email transfer...');
+                    const emailTransferController = new TransferController();
+                    await emailTransferController.handleEmailTransferStart(ctx);
+                    break;
+                case 'transfer_wallet':
+                    await ctx.editMessageText('👛 Starting wallet transfer...');
+                    const walletTransferController = new TransferController();
+                    await walletTransferController.handleWalletTransferStart(ctx);
+                    break;
+                case 'transfer_bank':
+                    await ctx.editMessageText('🏦 Starting bank withdrawal...');
+                    const bankTransferController = new TransferController();
+                    await bankTransferController.handleBankTransferStart(ctx);
+                    break;
+                case 'transfer_batch':
+                    await ctx.editMessageText('📤 Starting batch transfer...');
+                    const batchTransferController = new TransferController();
+                    await batchTransferController.handleBatchTransferStart(ctx);
+                    break;
+                default:
+                    await ctx.reply('⚠️ Unknown action requested');
+            }
+        } catch (error) {
+            console.error('Specific action error:', error);
+            await ctx.reply('❌ An error occurred while processing your request. Please try again.');
         }
     }
 

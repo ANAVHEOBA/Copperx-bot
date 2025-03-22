@@ -7,7 +7,7 @@ export interface MenuState {
     data?: any;
 }
 
-// Define the session data structure
+
 export interface SessionData {
     accessToken?: string;
     tokenTimestamp?: number;
@@ -19,12 +19,13 @@ export interface SessionData {
         entities?: any;
         step?: number;
     };
+    selectedNetwork?: string;
 }
 
-// Define the custom context type that includes session data
+
 export interface Context extends TelegrafContext {
     session: SessionData;
 }
 
-// Create a custom bot type that uses our Context
+
 export type Bot = Telegraf<Context>;

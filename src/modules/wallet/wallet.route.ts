@@ -25,13 +25,23 @@ export class WalletRoute {
         this.bot.command('networks', (ctx) => this.controller.handleNetworks(ctx));
         this.bot.command('token_balance', (ctx) => this.controller.handleTokenBalance(ctx));
         this.bot.command('recover_tokens', (ctx) => this.controller.handleRecoverTokens(ctx));
+        this.bot.command('all_balances', (ctx) => this.controller.handleAllWalletBalances(ctx));
         this.bot.action('menu_wallet', async (ctx) => {
             await this.menuService.handleMenuAction(ctx);
         });
         this.bot.action(/^wallet_.*/, async (ctx) => {
             await this.handleWalletAction(ctx);
         });
+        this.bot.action('wallet_token_balance', (ctx) => this.controller.handleTokenBalanceMenu(ctx));
+        this.bot.action(/^token_balance_network:(.+)$/, (ctx) => {
+            const network = ctx.match[1];
+            return this.controller.handleTokenBalanceNetworkSelected(ctx, network);
+        });
         this.bot.on('text', async (ctx) => {
+            if (ctx.session?.selectedNetwork) {
+                await this.controller.handleTokenBalance(ctx, ctx.message.text);
+                return;
+            }
             await this.menuService.handleNaturalLanguage(ctx, ctx.message.text);
         });
     }
@@ -40,14 +50,33 @@ export class WalletRoute {
         if (!ctx.callbackQuery || !('data' in ctx.callbackQuery)) return;
         const action = ctx.callbackQuery.data;
 
-        switch (action) {
-            case 'wallet_balance':
-                await this.controller.handleWalletBalance(ctx);
-                break;
-            case 'wallet_history':
-                await this.controller.handleWalletList(ctx);
-                break;
-            // Add other wallet actions
+        try {
+            await ctx.answerCbQuery();
+
+            switch (action) {
+                case 'wallet_balance':
+                    await this.controller.handleWalletBalance(ctx);
+                    break;
+                case 'wallet_all_balances':
+                    await this.controller.handleAllWalletBalances(ctx);
+                    break;
+                case 'wallet_history':
+                    await this.controller.handleWalletList(ctx);
+                    break;
+                case 'wallet_set_default':
+                    await this.controller.handleSetDefaultWallet(ctx);
+                    break;
+                case 'wallet_token_balance':
+                    await this.controller.handleTokenBalanceMenu(ctx);
+                    break;
+                default:
+                    await ctx.editMessageText('⚠️ Invalid wallet action requested');
+            }
+        } catch (error: any) {
+            console.error('Wallet action error:', error);
+            if (!error.description?.includes('message is not modified')) {
+                await ctx.reply('❌ An error occurred. Please try again.');
+            }
         }
     }
 } 

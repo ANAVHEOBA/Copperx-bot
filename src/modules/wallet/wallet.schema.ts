@@ -43,4 +43,16 @@ export interface RecoverTokensRequest {
 
 export interface WalletSessionData {
     organizationId: string;
+}
+
+export interface WalletWithBalances {
+    walletId: string;
+    isDefault: boolean;
+    network: string;
+    balances: {
+        decimals: number;
+        balance: string;
+        symbol: string;
+        address: string;
+    }[];
 } 
