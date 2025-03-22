@@ -38,6 +38,7 @@ export class AuthCrud {
 
   static async verifyOtp(data: VerifyOtpRequestDto): Promise<AuthResponseDto> {
     try {
+      console.log('Sending OTP verification request:', data);
       const response = await axios.post<AuthResponseDto>(
         `${CONFIG.API.BASE_URL}/api/auth/email-otp/authenticate`,
         data,
@@ -48,9 +49,15 @@ export class AuthCrud {
         }
       );
 
+      console.log('OTP verification response:', response.data);
       return response.data;
     } catch (error) {
       if (axios.isAxiosError(error)) {
+        console.error('OTP Verification Error:', { 
+          status: error.response?.status,
+          data: error.response?.data,
+          message: error.message
+        });
         const errorResponse: ErrorResponseDto = {
           message: error.response?.data?.message || 'Unknown error',
           statusCode: error.response?.status || 500,

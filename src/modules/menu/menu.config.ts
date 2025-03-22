@@ -1,6 +1,17 @@
 export const MENUS = {
+    START: {
+        title: '🏠 Welcome to Copperx Bot!\n\n' +
+               '❗️ You need to login first to access the features.\n' +
+               'Please click the Login button below:',
+        options: [
+            { text: '🔑 Login', callback: 'start_login' },
+            { text: 'ℹ️ Help', callback: 'menu_help' }
+        ]
+    },
+    
+    // After login, show this main menu
     MAIN: {
-        title: '🏠 Welcome to Copperx Bot!\nPlease select an option:',
+        title: '🏠 Welcome to Copperx Bot!\nWhat would you like to do?',
         options: [
             { text: '💰 Wallet', callback: 'menu_wallet' },
             { text: '💸 Transfer', callback: 'menu_transfer' },
@@ -76,4 +87,11 @@ export const NATURAL_LANGUAGE_PATTERNS = {
         'verification',
         'identity'
     ]
+};
+
+// Add login states to track conversation
+export const LOGIN_STATES = {
+    NONE: 'none',
+    WAITING_EMAIL: 'waiting_email',
+    WAITING_OTP: 'waiting_otp'
 }; 

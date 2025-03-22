@@ -16,13 +16,20 @@ import {
 export class TransferController {
     private pendingTransfers: Map<number, TransferRequest> = new Map();
 
+    // Add helper method for auth check
+    private async checkAuth(ctx: Context): Promise<string | null> {
+        const accessToken = await SessionManager.getToken(ctx);
+        if (!accessToken) {
+            await ctx.reply('🔒 Please login first by clicking the Login button in the main menu');
+            return null;
+        }
+        return accessToken;
+    }
+
     async handleSendTransfer(ctx: Context): Promise<void> {
         try {
-            const accessToken = await SessionManager.getToken(ctx);
-            if (!accessToken) {
-                await ctx.reply('Please login first using /login');
-                return;
-            }
+            const accessToken = await this.checkAuth(ctx);
+            if (!accessToken) return;
 
             const message = ctx.message as Message.TextMessage;
             if (!message?.text) {
@@ -150,7 +157,7 @@ export class TransferController {
         if (message?.text?.toLowerCase() === 'confirm') {
             const data = this.pendingTransfers.get(userId)!;
             try {
-                const accessToken = await SessionManager.getToken(ctx);
+                const accessToken = await this.checkAuth(ctx);
                 const transfer = await TransferCrud.sendTransfer(accessToken!, data);
                 const model = new TransferModel(transfer);
                 await ctx.reply(model.getTransferInfo());
@@ -177,11 +184,8 @@ export class TransferController {
 
     async handleWalletWithdraw(ctx: Context): Promise<void> {
         try {
-            const accessToken = await SessionManager.getToken(ctx);
-            if (!accessToken) {
-                await ctx.reply('Please login first using /login');
-                return;
-            }
+            const accessToken = await this.checkAuth(ctx);
+            if (!accessToken) return;
 
             const message = ctx.message as Message.TextMessage;
             if (!message?.text) {
@@ -218,11 +222,8 @@ export class TransferController {
 
     async handleOfframp(ctx: Context): Promise<void> {
         try {
-            const accessToken = await SessionManager.getToken(ctx);
-            if (!accessToken) {
-                await ctx.reply('Please login first using /login');
-                return;
-            }
+            const accessToken = await this.checkAuth(ctx);
+            if (!accessToken) return;
 
             const message = ctx.message as Message.TextMessage;
             if (!message?.text) {
@@ -267,11 +268,8 @@ export class TransferController {
 
     async handleBatchTransfer(ctx: Context): Promise<void> {
         try {
-            const accessToken = await SessionManager.getToken(ctx);
-            if (!accessToken) {
-                await ctx.reply('Please login first using /login');
-                return;
-            }
+            const accessToken = await this.checkAuth(ctx);
+            if (!accessToken) return;
 
             const message = ctx.message as Message.TextMessage;
             if (!message?.text) {
@@ -314,11 +312,8 @@ export class TransferController {
 
     async handleListTransfers(ctx: Context): Promise<void> {
         try {
-            const accessToken = await SessionManager.getToken(ctx);
-            if (!accessToken) {
-                await ctx.reply('Please login first using /login');
-                return;
-            }
+            const accessToken = await this.checkAuth(ctx);
+            if (!accessToken) return;
 
             const message = ctx.message as Message.TextMessage;
             const args = message.text.split(' ');

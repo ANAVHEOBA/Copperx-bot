@@ -11,7 +11,7 @@ export class WalletController {
         try {
             const accessToken = await SessionManager.getToken(ctx);
             if (!accessToken) {
-                await ctx.reply('Please login first using /login');
+                await ctx.reply('🔒 Please login first by clicking the Login button in the main menu');
                 return;
             }
 
@@ -39,7 +39,7 @@ export class WalletController {
         try {
             const accessToken = await SessionManager.getToken(ctx);
             if (!accessToken) {
-                await ctx.reply('Please login first using /login');
+                await ctx.reply('🔒 Please login first by clicking the Login button in the main menu');
                 return;
             }
 
@@ -75,7 +75,7 @@ export class WalletController {
         try {
             const accessToken = await SessionManager.getToken(ctx);
             if (!accessToken) {
-                await ctx.reply('Please login first using /login');
+                await ctx.reply('🔒 Please login first by clicking the Login button in the main menu');
                 return;
             }
 
@@ -96,7 +96,7 @@ export class WalletController {
         try {
             const accessToken = await SessionManager.getToken(ctx);
             if (!accessToken) {
-                await ctx.reply('Please login first using /login');
+                await ctx.reply('🔒 Please login first by clicking the Login button in the main menu');
                 return;
             }
 
@@ -137,7 +137,7 @@ export class WalletController {
 
             const accessToken = await SessionManager.getToken(ctx);
             if (!accessToken) {
-                await ctx.reply('Please login first using /login');
+                await ctx.reply('🔒 Please login first by clicking the Login button in the main menu');
                 return;
             }
 
@@ -159,7 +159,7 @@ export class WalletController {
         try {
             const accessToken = await SessionManager.getToken(ctx);
             if (!accessToken) {
-                await ctx.reply('Please login first using /login');
+                await ctx.reply('🔒 Please login first by clicking the Login button in the main menu');
                 return;
             }
 
@@ -184,7 +184,7 @@ export class WalletController {
         try {
             const accessToken = await SessionManager.getToken(ctx);
             if (!accessToken) {
-                await ctx.reply('Please login first using /login');
+                await ctx.reply('🔒 Please login first by clicking the Login button in the main menu');
                 return;
             }
 
@@ -219,7 +219,7 @@ export class WalletController {
         try {
             const accessToken = await SessionManager.getToken(ctx);
             if (!accessToken) {
-                await ctx.reply('Please login first using /login');
+                await ctx.reply('🔒 Please login first by clicking the Login button in the main menu');
                 return;
             }
 
@@ -260,4 +260,13 @@ export class WalletController {
             await ctx.reply('❌ Failed to recover tokens. Please try again.');
         }
     }
-} 
+
+    private async checkAuth(ctx: Context): Promise<string | null> {
+        const accessToken = await SessionManager.getToken(ctx);
+        if (!accessToken) {
+            await ctx.reply('🔒 Please login first by clicking the Login button in the main menu');
+            return null;
+        }
+        return accessToken;
+    }
+}
