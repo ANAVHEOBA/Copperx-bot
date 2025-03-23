@@ -19,6 +19,20 @@ interface TransferState {
     data: Partial<TransferRequest>;
 }
 
+interface WalletBalance {
+    symbol: string;
+    balance: string;
+    decimals: number;
+    address: string;
+}
+
+interface Wallet {
+    walletId: string;
+    isDefault: boolean | null;
+    network: string;
+    balances: WalletBalance[];
+}
+
 export class TransferController {
     protected transferStates: Map<number, TransferState> = new Map();
 
@@ -27,7 +41,8 @@ export class TransferController {
         console.log('🔍 Getting transfer state:', {
             userId,
             hasState: !!state,
-            state
+            step: state?.step,
+            data: state?.data
         });
         return state;
     }
@@ -36,232 +51,90 @@ export class TransferController {
         this.transferStates.delete(userId);
     }
 
-    async handleEmailTransferStart(ctx: Context): Promise<void> {
-        try {
-            const userId = ctx.from?.id;
-            if (!userId) return;
-
-            // Initialize transfer state
-            const initialState: TransferState = {
-                step: 'currency',
-                data: {
-                    purposeCode: 'self'
-                }
-            };
-            this.transferStates.set(userId, initialState);
-            console.log('Initial state set:', initialState); // Debug log
-
-            // Show currency selection keyboard
-            const validCurrencies = ['USD', 'USDC', 'USDT', 'ETH', 'BTC'];
-            await ctx.reply(
-                '💱 Select the currency you want to send:',
-                Markup.keyboard(validCurrencies.map(c => [c]).concat([['❌ Cancel']]))
-                    .oneTime()
-                    .resize()
-            );
-        } catch (error) {
-            console.error('Error starting email transfer:', error);
-            await ctx.reply('❌ An error occurred. Please try again.');
-            this.resetTransferState(ctx.from?.id!);
-        }
+    public setState(userId: number, state: TransferState): void {
+        this.transferStates.set(userId, state);
+        console.log('🔄 State updated for user:', userId, state);
     }
 
-    async handleCurrencySelection(ctx: Context): Promise<void> {
-        console.log('\n💱 === CURRENCY SELECTION HANDLER ===');
+    public async handleCurrency(ctx: Context, currency: string): Promise<void> {
+        console.log('\n💱 === HANDLE CURRENCY START ===');
         const userId = ctx.from?.id;
         if (!userId) {
-            console.log('❌ No userId found in currency selection');
+            console.log('❌ No userId found');
             return;
         }
 
-        const state = this.transferStates.get(userId);
-        console.log('🔄 Current state:', state);
-        console.log('📩 Message:', ctx.message);
-
-        if (!state || state.step !== 'currency') {
-            console.log('❌ Invalid state for currency selection:', {
-                hasState: !!state,
-                step: state?.step
-            });
-            return;
-        }
-
-        const message = ctx.message as Message.TextMessage;
-        const selectedCurrency = message?.text?.trim();
-        console.log('💱 Selected currency:', selectedCurrency);
-
-        if (!selectedCurrency) {
-            console.log('❌ No currency text found');
-            await ctx.reply('Please select a currency from the keyboard');
-            return;
-        }
-
-        if (selectedCurrency === '❌ Cancel') {
-            console.log('✅ Transfer cancelled by user');
-            this.resetTransferState(userId);
-            await ctx.reply('Transfer cancelled', Markup.removeKeyboard());
-            return;
-        }
-
-        const validCurrencies = ['USD', 'USDC', 'USDT', 'ETH', 'BTC'];
-        if (!validCurrencies.includes(selectedCurrency)) {
-            console.log('❌ Invalid currency selected:', selectedCurrency);
-            await ctx.reply(
-                '❌ Please select a valid currency:',
-                Markup.keyboard(validCurrencies.map(c => [c]).concat([['❌ Cancel']]))
-                    .oneTime()
-                    .resize()
-            );
-            return;
-        }
-
-        // Update state with selected currency
-        const newState: TransferState = {
-            step: 'amount',
-            data: {
-                ...state.data,
-                currency: selectedCurrency,
-                purposeCode: 'self'
+        try {
+            console.log('Processing currency:', currency);
+            
+            // Get wallet balances to verify the currency is available
+            const accessToken = await SessionManager.getToken(ctx);
+            if (!accessToken) {
+                await ctx.reply('❌ Please login first');
+                return;
             }
-        };
-        
-        console.log('✅ Setting new state:', newState);
-        this.transferStates.set(userId, newState);
 
-        // Move to amount input
-        await ctx.reply(
-            '💰 Enter the amount to send:',
-            Markup.removeKeyboard()
-        );
-        console.log('✅ Amount prompt sent');
-        console.log('=== CURRENCY SELECTION HANDLER END ===\n');
+            const wallets = await TransferCrud.getWalletBalances(accessToken);
+            console.log('Wallet balances:', wallets);
+
+            // Fix: Create state object with correct types
+            const newState: TransferState = {
+                step: 'amount' as const,
+                data: {
+                    purposeCode: 'self' as const,
+                    currency: currency.toUpperCase()
+                }
+            };
+
+            this.setState(userId, newState);
+            console.log('State updated:', newState);
+
+            // Ask for amount
+            await ctx.reply(
+                `💰 Enter amount of ${currency} to withdraw:`,
+                Markup.removeKeyboard()
+            );
+            console.log('Amount prompt sent');
+
+        } catch (error) {
+            console.error('❌ Error handling currency:', error);
+            await ctx.reply('Failed to process currency selection. Please try again.');
+            this.resetTransferState(userId);
+        }
+        console.log('=== HANDLE CURRENCY END ===\n');
     }
 
-    async handleAmountInput(ctx: Context): Promise<void> {
-        console.log('handleAmountInput called'); // Debug log
-        
+    public async handleAmount(ctx: Context, amount: string): Promise<void> {
         const userId = ctx.from?.id;
         if (!userId) return;
 
-        const state = this.transferStates.get(userId);
-        if (!state || state.step !== 'amount') return;
-
-        const message = ctx.message as Message.TextMessage;
-        if (!message?.text) return;
-
-        const amount = message.text.trim();
-        if (isNaN(Number(amount)) || Number(amount) <= 0) {
+        const numAmount = Number(amount);
+        if (isNaN(numAmount) || numAmount <= 0) {
             await ctx.reply('❌ Please enter a valid positive number.');
             return;
         }
 
-        // Update state with amount and move to email step
-        const newState: TransferState = {
+        const state = this.transferStates.get(userId);
+        if (!state) return;
+
+        // Update state and ask for email
+        this.transferStates.set(userId, {
             step: 'email',
             data: {
                 ...state.data,
                 amount
             }
-        };
-        
-        this.transferStates.set(userId, newState);
+        });
 
-        // Prompt for email
-        await ctx.reply(
-            '📧 Please enter the recipient\'s email address:',
-            { reply_markup: { force_reply: true } }
-        );
+        await ctx.reply('📧 Enter recipient email address:');
     }
 
     async handleEmailInput(ctx: Context): Promise<void> {
         const userId = ctx.from?.id;
-        if (!userId) return;
+        if (!userId || !ctx.message || !('text' in ctx.message)) return;
 
-        const state = this.transferStates.get(userId);
-        if (!state || state.step !== 'email') return;
-
-        const message = ctx.message as Message.TextMessage;
-        const email = message?.text;
-        if (!email || !this.isValidEmail(email)) {
-            await ctx.reply('❌ Please enter a valid email address');
-            return;
-        }
-
-        state.data.email = email;
-        state.data.purposeCode = 'self';
-        state.step = 'preview';
-        this.transferStates.set(userId, state);
-
-        const previewTransfer = await this.createPreviewTransfer(state.data);
-        const model = new TransferModel(previewTransfer);
-
-        await ctx.reply(
-            model.getTransferPreview(),
-            Markup.inlineKeyboard([
-                [
-                    Markup.button.callback('✅ Confirm', 'transfer_confirm'),
-                    Markup.button.callback('❌ Cancel', 'transfer_cancel')
-                ]
-            ])
-        );
-    }
-
-    private async createPreviewTransfer(data: Partial<TransferRequest>): Promise<Transfer> {
-        return {
-            id: 'preview',
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            organizationId: '',
-            status: 'pending',
-            customerId: '',
-            customer: {
-                id: '',
-                createdAt: '',
-                updatedAt: '',
-                name: '',
-                businessName: '',
-                email: '',
-                country: ''
-            },
-            type: 'send',
-            sourceCountry: '',
-            destinationCountry: '',
-            destinationCurrency: data.currency!,
-            amount: data.amount!,
-            currency: data.currency!,
-            totalFee: '2.50',
-            amountSubtotal: (Number(data.amount) + 2.50).toString(),
-            feePercentage: '',
-            feeCurrency: data.currency!,
-            purposeCode: 'self',
-            sourceOfFunds: 'salary',
-            recipientRelationship: 'self',
-            sourceAccountId: '',
-            destinationAccountId: '',
-            mode: 'on_ramp',
-            isThirdPartyPayment: false,
-            sourceAccount: {
-                id: '',
-                createdAt: '',
-                updatedAt: '',
-                type: 'web3_wallet',
-                country: '',
-                network: '',
-                accountId: '',
-                walletAddress: ''
-            },
-            destinationAccount: {
-                id: '',
-                createdAt: '',
-                updatedAt: '',
-                type: 'web3_wallet',
-                country: '',
-                network: '',
-                accountId: '',
-                walletAddress: '',
-                payeeEmail: data.email
-            }
-        };
+        const email = ctx.message.text.trim();
+        await this.handleEmail(ctx, email);
     }
 
     async handleTransferCancellation(ctx: Context): Promise<void> {
@@ -269,29 +142,241 @@ export class TransferController {
         if (!userId) return;
 
         this.transferStates.delete(userId);
-        await ctx.answerCbQuery();
-        await ctx.reply('❌ Transfer cancelled');
+        await ctx.reply('Transfer cancelled', Markup.removeKeyboard());
+    }
+
+    async handleEmailTransferStart(ctx: Context): Promise<void> {
+        console.log('\n🔄 Starting email transfer flow');
+        const userId = ctx.from?.id;
+        if (!userId) return;
+
+        // Set initial state
+        const initialState: TransferState = {
+            step: 'currency',
+            data: { purposeCode: 'self' }
+        };
+        this.transferStates.set(userId, initialState);
+        console.log('✅ Initial state set:', initialState);
+
+        // Show currency selection keyboard with force reply
+        await ctx.reply(
+            '💱 Select currency to send (USDC, USDT, or ETH):',
+            Markup.keyboard([
+                ['USDC'], 
+                ['USDT'],
+                ['ETH']
+            ])
+            .oneTime()
+            .resize()
+        );
+    }
+
+    async handleMessage(ctx: Context): Promise<void> {
+        console.log('\n📝 === DETAILED TRANSFER MESSAGE HANDLER LOG ===');
+        
+        // Log the entire context message for debugging
+        console.log('Incoming message context:', {
+            updateType: ctx.updateType,
+            message: ctx.message,
+            from: ctx.from,
+            chat: ctx.chat
+        });
+
+        const userId = ctx.from?.id;
+        if (!userId || !ctx.message || !('text' in ctx.message)) {
+            console.error('❌ Message validation failed:', {
+                hasUserId: !!userId,
+                hasMessage: !!ctx.message,
+                hasText: !!(ctx.message && 'text' in ctx.message)
+            });
+            return;
+        }
+
+        const state = this.transferStates.get(userId);
+        const text = ctx.message.text.trim();
+
+        // Log current state and message
+        console.log('🔍 Current transfer state:', {
+            userId,
+            messageText: text,
+            currentStep: state?.step,
+            currentData: state?.data,
+            hasState: !!state,
+            transferStatesSize: this.transferStates.size
+        });
+
+        if (!state) {
+            console.log('❌ No active transfer state found for user:', userId);
+            return;
+        }
+
+        try {
+            console.log(`\n🔄 Processing step: ${state.step}`);
+            
+            switch (state.step) {
+                case 'currency':
+                    console.log('💱 Starting currency selection handler');
+                    console.log('Input currency:', text);
+                    await this.handleCurrency(ctx, text);
+                    console.log('Currency selection handler completed');
+                    break;
+                
+                case 'amount':
+                    console.log('💰 Starting amount handler');
+                    console.log('Input amount:', text);
+                    await this.handleAmount(ctx, text);
+                    console.log('Amount handler completed');
+                    break;
+                
+                default:
+                    console.error('❌ Unknown step encountered:', state.step);
+            }
+        } catch (error) {
+            console.error('❌ Error in transfer handler:', {
+                error,
+                step: state.step,
+                input: text,
+                userId
+            });
+            await ctx.reply('An error occurred. Please try again.');
+            this.transferStates.delete(userId);
+        }
+        
+        console.log('=== TRANSFER MESSAGE HANDLER END ===\n');
+    }
+
+    private async handleEmail(ctx: Context, email: string): Promise<void> {
+        const userId = ctx.from?.id;
+        if (!userId) return;
+
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) {
+            await ctx.reply('❌ Invalid email format. Please try again.');
+            return;
+        }
+
+        const state = this.transferStates.get(userId);
+        if (!state?.data.currency || !state?.data.amount) return;
+
+        // Show confirmation
+        await ctx.reply(
+            `📝 Transfer Summary:\n\n` +
+            `Amount: ${state.data.amount} ${state.data.currency}\n` +
+            `To: ${email}\n\n` +
+            `Confirm transfer?`,
+            Markup.inlineKeyboard([
+                [
+                    Markup.button.callback('✅ Confirm', 'transfer_confirm'),
+                    Markup.button.callback('❌ Cancel', 'transfer_cancel')
+                ]
+            ])
+        );
+
+        // Save email to state
+        this.transferStates.set(userId, {
+            step: 'preview',
+            data: {
+                ...state.data,
+                email
+            }
+        });
     }
 
     async handleWalletTransferStart(ctx: Context): Promise<void> {
-        try {
-            const accessToken = await this.checkAuth(ctx);
-            if (!accessToken) return;
+        console.log('\n🔄 === WALLET TRANSFER START ===');
+        
+        await ctx.reply(
+            '💱 Please enter your transfer details in the following format:\n\n' +
+            '<amount> <currency> <wallet_address>\n\n' +
+            'Example: 100 USDC 0x1234...\n\n' +
+            'Supported currencies: USDC, USDT, ETH'
+        );
+    }
 
+    async handleWalletTransferCommand(ctx: Context, text: string): Promise<void> {
+        console.log('\n💸 === WALLET TRANSFER COMMAND START ===');
+        console.log('Processing text:', text);
+
+        try {
+            const accessToken = await SessionManager.getToken(ctx);
+            console.log('Access token found:', !!accessToken);
+            
+            if (!accessToken) {
+                await ctx.reply('Please login first using /start');
+                return;
+            }
+
+            // Parse command parameters
+            const params = text.trim().split(' ');
+            console.log('Parsed params:', params);
+
+            if (params.length !== 3) {
+                await ctx.reply(
+                    '❌ Invalid format\n\n' +
+                    'Please use: <amount> <currency> <wallet_address>\n' +
+                    'Example: 100 USDC 0x1234...'
+                );
+                return;
+            }
+
+            const [amount, currency, walletAddress] = params;
+            const upperCurrency = currency.toUpperCase();
+            console.log('Processing transfer:', { amount, currency: upperCurrency, walletAddress });
+
+            // Validate amount
+            const numAmount = Number(amount);
+            if (isNaN(numAmount) || numAmount <= 0) {
+                await ctx.reply('❌ Please enter a valid positive number for amount.');
+                return;
+            }
+
+            // Validate currency
+            const validCurrencies = ['USDC', 'USDT', 'ETH'];
+            if (!validCurrencies.includes(upperCurrency)) {
+                await ctx.reply(`❌ Invalid currency. Please use one of: ${validCurrencies.join(', ')}`);
+                return;
+            }
+
+            // Check wallet balance
+            console.log('Checking wallet balance...');
+            const wallets = await TransferCrud.getWalletBalances(accessToken);
+            console.log('Wallet balances:', wallets);
+
+            const currencyBalance = wallets.find((w: any) => 
+                w.balances.some((b: any) => b.symbol === upperCurrency)
+            )?.balances.find((b: any) => b.symbol === upperCurrency);
+
+            if (!currencyBalance || Number(currencyBalance.balance) < numAmount) {
+                await ctx.reply(`❌ Insufficient ${upperCurrency} balance.`);
+                return;
+            }
+
+            // Show confirmation dialog
+            const confirmationMessage = 
+                `🔄 Confirm transfer:\n\n` +
+                `Amount: ${amount} ${upperCurrency}\n` +
+                `To: ${walletAddress}\n\n` +
+                `Are you sure?`;
+
+            console.log('Showing confirmation dialog');
             await ctx.reply(
-                '👛 Send to Wallet\n\n' +
-                'Please use the following format:\n' +
-                '/send <amount> <currency> <wallet_address>\n\n' +
-                'Example:\n' +
-                '/send 50 USDC 0x1234...',
+                confirmationMessage,
                 Markup.inlineKeyboard([
-                    [Markup.button.callback('⬅️ Back to Transfer Menu', 'menu_transfer')]
+                    [
+                        Markup.button.callback(
+                            '✅ Confirm', 
+                            `confirm_withdraw_${amount}_${upperCurrency}_${walletAddress}`
+                        ),
+                        Markup.button.callback('❌ Cancel', 'cancel_withdraw')
+                    ]
                 ])
             );
+
         } catch (error) {
-            console.error('Failed to start wallet transfer:', error);
+            console.error('❌ Failed to process wallet transfer:', error);
             await ctx.reply('❌ An error occurred. Please try again.');
         }
+        console.log('=== WALLET TRANSFER COMMAND END ===\n');
     }
 
     async handleBankTransferStart(ctx: Context): Promise<void> {
@@ -515,44 +600,6 @@ export class TransferController {
     private isValidWalletAddress(address: string): boolean {
         // Basic validation - should be enhanced based on specific blockchain requirements
         return /^0x[a-fA-F0-9]{40}$/.test(address);
-    }
-
-    async handleWalletWithdraw(ctx: Context): Promise<void> {
-        try {
-            const accessToken = await this.checkAuth(ctx);
-            if (!accessToken) return;
-
-            const message = ctx.message as Message.TextMessage;
-            if (!message?.text) {
-                await ctx.reply('Invalid command format');
-                return;
-            }
-
-            const args = message.text.split(' ');
-            if (args.length !== 4) {
-                await ctx.reply('Usage: /withdraw <amount> <currency> <wallet_address>');
-                return;
-            }
-
-            const [_, amount, currency, walletAddress] = args;
-            const data: WalletWithdrawRequest = {
-                amount,
-                currency,
-                walletAddress,
-                purposeCode: 'self'
-            };
-
-            const transfer = await TransferCrud.withdrawToWallet(accessToken, data);
-            const transferModel = new TransferModel(transfer);
-
-            await ctx.reply(
-                '💸 Withdrawal Initiated!\n\n' +
-                transferModel.getTransferInfo()
-            );
-        } catch (error) {
-            console.error('Failed to withdraw to wallet:', error);
-            await ctx.reply('❌ Failed to withdraw to wallet. Please try again.');
-        }
     }
 
     async handleOfframp(ctx: Context): Promise<void> {

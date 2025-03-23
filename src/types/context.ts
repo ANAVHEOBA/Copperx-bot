@@ -1,4 +1,5 @@
 import { Context as TelegrafContext, Telegraf } from 'telegraf';
+import { Update } from 'telegraf/types';
 
 export interface MenuState {
     currentMenu?: string;
@@ -6,7 +7,6 @@ export interface MenuState {
     pendingAction?: string;
     data?: any;
 }
-
 
 export interface SessionData {
     accessToken?: string;
@@ -22,10 +22,10 @@ export interface SessionData {
     selectedNetwork?: string;
 }
 
-
+// Define our custom context type
 export interface Context extends TelegrafContext {
     session: SessionData;
 }
 
-
+// Define the bot type with our custom context
 export type Bot = Telegraf<Context>;

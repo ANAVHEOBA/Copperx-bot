@@ -31,10 +31,21 @@ export class TransferCrud {
     }
 
     static async withdrawToWallet(accessToken: string, data: WalletWithdrawRequest): Promise<Transfer> {
+        console.log('\n🔄 === WITHDRAW TO WALLET API CALL ===');
+        console.log('Request data:', {
+            ...data,
+            amount: data.amount.toString(),
+            currency: data.currency.toUpperCase()
+        });
+        
         try {
             const response = await axios.post<Transfer>(
                 `${CONFIG.API.BASE_URL}/api/transfers/wallet-withdraw`,
-                data,
+                {
+                    ...data,
+                    amount: data.amount.toString(),
+                    currency: data.currency.toUpperCase()
+                },
                 {
                     headers: {
                         'Authorization': `Bearer ${accessToken}`,
@@ -42,17 +53,14 @@ export class TransferCrud {
                     }
                 }
             );
+            console.log('✅ API Response:', response.data);
             return response.data;
         } catch (error) {
-            if (axios.isAxiosError(error)) {
-                console.error('Wallet Withdraw Error:', error.response?.data);
-                const errorResponse: ErrorResponseDto = {
-                    message: error.response?.data?.message || 'Failed to withdraw to wallet',
-                    statusCode: error.response?.status || 500,
-                    error: error.response?.data?.error || error.message
-                };
-                throw errorResponse;
-            }
+            console.error('❌ API Error:', {
+                status: axios.isAxiosError(error) ? error.response?.status : 'unknown',
+                data: axios.isAxiosError(error) ? error.response?.data : error,
+                message: error instanceof Error ? error.message : 'Unknown error'
+            });
             throw error;
         }
     }
@@ -159,6 +167,29 @@ export class TransferCrud {
                     error: error.response?.data?.error || error.message
                 };
                 throw errorResponse;
+            }
+            throw error;
+        }
+    }
+
+    static async getWalletBalances(accessToken: string): Promise<any> {
+        try {
+            const response = await axios.get(
+                `${CONFIG.API.BASE_URL}/api/wallets/balances`,
+                {
+                    headers: {
+                        'Authorization': `Bearer ${accessToken}`,
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json',
+                        'User-Agent': 'CopperX-Bot/1.0'
+                    }
+                }
+            );
+            return response.data;
+        } catch (error) {
+            if (axios.isAxiosError(error)) {
+                console.error('Get Balances Error:', error.response?.data);
+                throw error.response?.data || error;
             }
             throw error;
         }

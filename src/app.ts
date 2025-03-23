@@ -74,104 +74,124 @@ export class App {
     }
 
     private initializeMiddlewares(): void {
-        // Add persistent session storage
-        this.bot.use(session({
-            defaultSession: (): SessionData => ({
-                accessToken: undefined,
-                tokenTimestamp: undefined
-            }),
-            store: {
-                get: (key: string) => {
-                    console.log('Getting session for key:', key);
-                    const session = this.sessions[key];
-                    if (CONFIG.APP.DEBUG) {
-                        console.log('Retrieved session:', session);
-                    }
-                    return session;
-                },
-                set: (key: string, value: SessionData) => {
-                    console.log('Setting session for key:', key);
-                    if (CONFIG.APP.DEBUG) {
-                        console.log('Setting session value:', value);
-                    }
-                    this.sessions[key] = value;
-                    this.saveSessions();
-                },
-                delete: (key: string) => {
-                    console.log('Deleting session for key:', key);
-                    delete this.sessions[key];
-                    this.saveSessions();
+        console.log('\n🔄 === INITIALIZING MIDDLEWARES ===');
+        
+        // Debug middleware - MUST be first
+        this.bot.use(async (ctx, next) => {
+            const startTime = Date.now();
+            console.log('\n🔍 === NEW UPDATE RECEIVED ===');
+            console.log('Update type:', ctx.updateType);
+            console.log('Raw update:', JSON.stringify(ctx.update, null, 2));
+            
+            try {
+                await next();
+                const ms = Date.now() - startTime;
+                console.log(`✅ Update processed in ${ms}ms`);
+            } catch (error) {
+                console.error('❌ Error in middleware:', error);
+                console.error('Stack trace:', error instanceof Error ? error.stack : 'No stack trace');
+                throw error;
+            }
+        });
+
+        // Session middleware
+        this.bot.use(session());
+
+        // Move command handlers BEFORE module initialization
+        this.setupBaseHandlers();
+
+        console.log('✅ Middlewares initialized');
+    }
+
+    private setupBaseHandlers(): void {
+        console.log('\n🔧 Setting up base handlers...');
+
+        // Debug handler for all updates
+        this.bot.on('message', (ctx, next) => {
+            console.log('\n📨 New message received:', {
+                type: ctx.updateType,
+                from: ctx.from?.id,
+                chat: ctx.chat?.id,
+                text: 'text' in ctx.message ? ctx.message.text : 'non-text message'
+            });
+            return next();
+        });
+
+        // Command handlers
+        this.bot.command('start', async (ctx) => {
+            console.log('🎯 /start command received');
+            try {
+                await ctx.reply('Welcome! I am your CopperX bot. How can I help you today?');
+                console.log('✅ Start command response sent');
+            } catch (error) {
+                console.error('❌ Error in start command:', error);
+            }
+        });
+
+        this.bot.command('help', async (ctx) => {
+            console.log('❓ /help command received');
+            try {
+                await ctx.reply('Available commands:\n/start - Start the bot\n/help - Show this help message');
+                console.log('✅ Help command response sent');
+            } catch (error) {
+                console.error('❌ Error in help command:', error);
+            }
+        });
+
+        // Text message handler
+        this.bot.on('text', async (ctx) => {
+            if (ctx.message.text.startsWith('/')) {
+                return; // Skip commands
+            }
+            
+            console.log('📝 Processing text message:', ctx.message.text);
+            try {
+                await ctx.reply(`You said: ${ctx.message.text}`);
+                console.log('✅ Reply sent');
+            } catch (error) {
+                console.error('❌ Error sending reply:', error);
+                try {
+                    await ctx.reply('Sorry, I encountered an error.');
+                } catch (e) {
+                    console.error('Failed to send error message:', e);
                 }
             }
-        }));
-
-        // Add logging middleware
-        this.bot.use(async (ctx, next) => {
-            const userId = ctx.from?.id;
-            console.log(`Session state for user ${userId}:`, ctx.session);
-            await next();
         });
+
+        // Fallback handler for unhandled message types
+        this.bot.on('message', async (ctx) => {
+            console.log('⚠️ Unhandled message type:', ctx.updateType);
+            try {
+                await ctx.reply('I received your message but I\'m not sure how to handle it.');
+            } catch (error) {
+                console.error('❌ Error in fallback handler:', error);
+            }
+        });
+
+        console.log('✅ Base handlers setup complete');
     }
 
     private initializeModules(): void {
-        // Initialize modules first
-        this.modules = [
-            new AuthRoute(this.bot),
-            new KycRoute(this.bot),
-            new WalletRoute(this.bot),
-            new TransferRoute(this.bot)
-        ];
+        console.log('\n🔧 === INITIALIZING MODULES ===');
         
-        // Store TransferRoute instance
-        this.transferRoute = this.modules.find(
-            (module): module is TransferRoute => module instanceof TransferRoute
-        );
+        try {
+            // Initialize transfer route
+            console.log('📝 Initializing transfer module...');
+            this.transferRoute = new TransferRoute(this.bot);
+            console.log('✅ Transfer module initialized');
 
-        // THEN set up text handler
-        this.bot.on('text', async (ctx) => {
-            console.log('\n🔍 === APP TEXT HANDLER START ===');
-            if (ctx.message && 'text' in ctx.message) {
-                const userId = ctx.from?.id;
-                console.log('📩 Message received:', {
-                    userId,
-                    text: ctx.message.text,
-                    from: ctx.from?.username,
-                    messageId: ctx.message.message_id
-                });
-
-                if (!userId) {
-                    console.log('❌ No userId found, skipping');
-                    return;
-                }
-
-                const hasActiveTransfer = this.transferRoute?.hasActiveTransfer(userId);
-                console.log('🔄 Transfer state check:', {
-                    hasTransferRoute: !!this.transferRoute,
-                    hasActiveTransfer,
-                    userId
-                });
-
-                if (hasActiveTransfer && this.transferRoute) {
-                    console.log('➡️ Delegating to transfer handler');
-                    await this.transferRoute.handleTextMessage(ctx);
-                    return;
-                }
-                
-                console.log('➡️ Delegating to menu handler');
-                await this.menuService.handleNaturalLanguage(ctx, ctx.message.text);
-            }
-            console.log('=== APP TEXT HANDLER END ===\n');
-        });
-
-        // Initialize menu system
-        this.bot.command('menu', (ctx) => this.menuService.showMainMenu(ctx));
-        this.bot.command('start', (ctx) => this.menuService.showWelcomeMessage(ctx));
-        
-        // Handle menu actions
-        this.bot.action(/^menu_.*/, (ctx) => this.menuService.handleMenuAction(ctx));
-        this.bot.action(/^(wallet|transfer|kyc|account)_.*/, (ctx) => {
-            this.menuService.handleMenuAction(ctx);
-        });
+            // Initialize other modules...
+            console.log('📝 Initializing other modules...');
+            this.modules = [
+                new AuthRoute(this.bot),
+                new KycRoute(this.bot),
+                new WalletRoute(this.bot)
+            ];
+            console.log('✅ Other modules initialized');
+        } catch (error) {
+            console.error('❌ Error initializing modules:', error);
+            throw error;
+        }
     }
 
     private setupErrorHandling(): void {
@@ -207,31 +227,109 @@ export class App {
 
     private setupShutdown(): void {
         const cleanup = async () => {
-            if (this.isShuttingDown) return;
-            this.isShuttingDown = true;
+            console.log('\n🔄 Cleanup requested...');
+            if (this.isShuttingDown) {
+                console.log('❌ Already shutting down, ignoring request');
+                return;
+            }
             
-            console.log('Saving sessions before shutdown...');
+            this.isShuttingDown = true;
+            console.log('💾 Saving sessions...');
             this.saveSessions();
             
-            console.log('Shutting down bot...');
+            console.log('🛑 Stopping bot...');
             await this.bot.stop();
-            process.exit(0);
+            
+            // Add a small delay before exit to allow logs to be written
+            setTimeout(() => {
+                console.log('👋 Exiting process...');
+                process.exit(0);
+            }, 1000);
         };
 
-        process.once('SIGINT', cleanup);
-        process.once('SIGTERM', cleanup);
-        process.once('SIGUSR2', cleanup);
+        // Only handle SIGINT and SIGTERM
+        process.once('SIGINT', () => {
+            console.log('\n⚠️ Received SIGINT signal');
+            cleanup();
+        });
+        
+        process.once('SIGTERM', () => {
+            console.log('\n⚠️ Received SIGTERM signal');
+            cleanup();
+        });
+
+        // Remove SIGUSR2 handler as it's not commonly used
+        // process.once('SIGUSR2', cleanup);
+
+        // Add unhandled rejection handler
+        process.on('unhandledRejection', (reason, promise) => {
+            console.error('\n❌ Unhandled Promise Rejection:');
+            console.error('Promise:', promise);
+            console.error('Reason:', reason);
+            // Don't exit the process, just log the error
+        });
+
+        // Add uncaught exception handler
+        process.on('uncaughtException', (error) => {
+            console.error('\n❌ Uncaught Exception:');
+            console.error(error);
+            // Don't exit the process, just log the error
+        });
     }
 
     public async start(retryCount = 0): Promise<void> {
         try {
+            console.log('\n🚀 === STARTING BOT ===');
+            
+            // First, delete any webhook to ensure we're in polling mode
+            await this.bot.telegram.deleteWebhook();
+            console.log('✅ Webhook deleted');
+
+            // Get bot info
+            const botInfo = await this.bot.telegram.getMe();
+            console.log('✅ Bot info:', botInfo);
+            console.log(`Bot username: @${botInfo.username}`);
+
+            // Test message handler
+            this.bot.on('text', (ctx) => {
+                console.log('📝 Text received:', ctx.message.text);
+            });
+
+            // Launch bot with explicit polling
             await this.bot.launch({
                 dropPendingUpdates: true,
-                allowedUpdates: ['message', 'callback_query']
+                polling: {
+                    timeout: 30
+                },
+                allowedUpdates: [
+                    'message',
+                    'callback_query',
+                    'edited_message',
+                    'channel_post',
+                    'edited_channel_post',
+                    'inline_query',
+                    'chosen_inline_result',
+                    'poll',
+                    'poll_answer'
+                ]
             });
-            console.log('🤖 Telegram bot is running...');
+            
+            console.log('✅ Bot launched successfully in polling mode');
+            console.log('🤖 Send a message to the bot to test it!');
+            
+            // Send a test message to verify bot is working
+            if (process.env.NODE_ENV === 'development') {
+                console.log('🔄 Running bot self-test...');
+                try {
+                    const testResult = await this.bot.telegram.getMe();
+                    console.log('✅ Self-test passed:', testResult);
+                } catch (error) {
+                    console.error('❌ Self-test failed:', error);
+                }
+            }
+            
         } catch (error) {
-            console.error('Failed to start bot:', error);
+            console.error('❌ Failed to start bot:', error);
             
             if (retryCount < this.MAX_RETRIES) {
                 console.log(`Retrying in ${this.RETRY_DELAY/1000} seconds... (Attempt ${retryCount + 1}/${this.MAX_RETRIES})`);
