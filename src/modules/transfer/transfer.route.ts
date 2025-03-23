@@ -4,21 +4,19 @@ import { Markup } from 'telegraf';
 
 // Import TransferState interface
 interface TransferState {
-    step: 'currency' | 'amount' | 'email' | 'preview';
+    step: 'currency' | 'amount' | 'wallet' | 'confirm';
     data: {
         currency?: string;
         amount?: string;
-        email?: string;
+        walletAddress?: string;
         purposeCode?: string;
     };
 }
 
 export class TransferRoute {
-    private bot: Bot;
     private controller: TransferController;
 
-    constructor(bot: Bot) {
-        this.bot = bot;
+    constructor(private bot: Bot) {
         this.controller = new TransferController();
         this.initializeRoutes();
     }
@@ -86,49 +84,29 @@ export class TransferRoute {
     }
 
     private initializeRoutes(): void {
-        console.log('\n🎯 === INITIALIZING TRANSFER ROUTES - START ===');
-        
-        // Register text handler first
+        console.log('🚀 Initializing transfer routes');
+
+        // Handle transfer menu callback
+        this.bot.action('transfer_wallet', async (ctx) => {
+            console.log('💰 Transfer to wallet selected');
+            await this.controller.handleTransferStart(ctx);
+        });
+
+        // Handle text messages during transfer
         this.bot.on('text', async (ctx) => {
-            console.log('\n💬 === TRANSFER TEXT HANDLER ===');
-            console.log('Message received:', {
-                text: ctx.message.text,
-                from: ctx.from?.id,
-                chat: ctx.chat?.id
-            });
-            
-            try {
-                const text = ctx.message.text.trim();
-                
-                // Skip commands
-                if (text.startsWith('/')) {
-                    console.log('⏭️ Skipping command:', text);
-                    return;
-                }
+            const userId = ctx.from?.id;
+            if (!userId) return;
 
-                const parts = text.split(' ');
-                console.log('Message parts:', parts);
+            // Skip if message is a command
+            if (ctx.message.text.startsWith('/')) return;
 
-                if (parts.length === 3) {
-                    console.log('🎯 Transfer pattern detected, parts:', parts);
-                    await this.controller.handleWalletTransferCommand(ctx, text);
-                } else {
-                    console.log('📝 Not a transfer pattern, parts length:', parts.length);
-                    await ctx.reply('Invalid transfer format. Use: <amount> <currency> <address>');
-                }
-            } catch (error) {
-                console.error('❌ Error in transfer handler:', error);
-                console.error('Stack trace:', error instanceof Error ? error.stack : 'No stack trace');
-                await ctx.reply('An error occurred. Please try again.');
-            }
+            // Forward to controller
+            await this.controller.handleMessage(ctx);
         });
 
-        // Register command handlers
-        this.bot.command('withdraw', ctx => {
-            console.log('💰 Withdraw command received');
-            ctx.reply('Please enter amount, currency and address (e.g., "100 USDC 0x1234...")');
+        // Add withdraw command
+        this.bot.command('withdraw', async (ctx) => {
+            await this.controller.handleTransferStart(ctx);
         });
-
-        console.log('✅ Transfer routes initialized');
     }
 } 

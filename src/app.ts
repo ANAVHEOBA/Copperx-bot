@@ -14,7 +14,7 @@ import { Message } from 'telegraf/types';
 export class App {
     private bot: Bot;
     private notificationsService: NotificationsService;
-    private menuService: MenuService;
+    private menuService!: MenuService;
     private modules: any[] = [];
     private transferRoute: TransferRoute | undefined;
     private isShuttingDown: boolean = false;
@@ -29,7 +29,6 @@ export class App {
         }
         this.bot = new Telegraf<Context>(CONFIG.TELEGRAM.BOT_TOKEN);
         this.notificationsService = new NotificationsService(this.bot);
-        this.menuService = new MenuService(this.bot);
         this.loadSessions();
         this.initializeMiddlewares();
         this.initializeModules();
@@ -97,7 +96,10 @@ export class App {
         // Session middleware
         this.bot.use(session());
 
-        // Move command handlers BEFORE module initialization
+        // Initialize MenuService before setting up handlers
+        this.menuService = new MenuService(this.bot);
+
+        // Setup base handlers
         this.setupBaseHandlers();
 
         console.log('✅ Middlewares initialized');
@@ -117,21 +119,18 @@ export class App {
             return next();
         });
 
-        // Command handlers
-        this.bot.command('start', async (ctx) => {
-            console.log('🎯 /start command received');
-            try {
-                await ctx.reply('Welcome! I am your CopperX bot. How can I help you today?');
-                console.log('✅ Start command response sent');
-            } catch (error) {
-                console.error('❌ Error in start command:', error);
-            }
-        });
-
+        // Help command
         this.bot.command('help', async (ctx) => {
             console.log('❓ /help command received');
             try {
-                await ctx.reply('Available commands:\n/start - Start the bot\n/help - Show this help message');
+                await ctx.reply(
+                    'Available commands:\n' +
+                    '/start - Open main menu\n' +
+                    '/help - Show this help message\n' +
+                    '/wallet - Manage your wallet\n' +
+                    '/transfer - Send funds\n' +
+                    '/kyc - Verify your identity'
+                );
                 console.log('✅ Help command response sent');
             } catch (error) {
                 console.error('❌ Error in help command:', error);
@@ -139,27 +138,20 @@ export class App {
         });
 
         // Text message handler
-        this.bot.on('text', async (ctx) => {
-            if (ctx.message.text.startsWith('/')) {
-                return; // Skip commands
+        this.bot.on('text', async (ctx, next) => {
+            if (!ctx.message.text.startsWith('/')) {
+                // Handle non-command text messages
+                await this.menuService.handleNaturalLanguage(ctx, ctx.message.text);
             }
-            
-            console.log('📝 Processing text message:', ctx.message.text);
-            try {
-                await ctx.reply(`You said: ${ctx.message.text}`);
-                console.log('✅ Reply sent');
-            } catch (error) {
-                console.error('❌ Error sending reply:', error);
-                try {
-                    await ctx.reply('Sorry, I encountered an error.');
-                } catch (e) {
-                    console.error('Failed to send error message:', e);
-                }
-            }
+            return next();
         });
 
-        // Fallback handler for unhandled message types
+        // Make this the last handler
         this.bot.on('message', async (ctx) => {
+            if (ctx.message.text?.startsWith('/start')) {
+                // Let MenuService handle /start command
+                return;
+            }
             console.log('⚠️ Unhandled message type:', ctx.updateType);
             try {
                 await ctx.reply('I received your message but I\'m not sure how to handle it.');
@@ -172,22 +164,22 @@ export class App {
     }
 
     private initializeModules(): void {
-        console.log('\n🔧 === INITIALIZING MODULES ===');
+        console.log('\n🔧 Initializing modules');
         
         try {
+            // MenuService is already initialized in initializeMiddlewares
+            
             // Initialize transfer route
-            console.log('📝 Initializing transfer module...');
             this.transferRoute = new TransferRoute(this.bot);
-            console.log('✅ Transfer module initialized');
-
-            // Initialize other modules...
-            console.log('📝 Initializing other modules...');
+            
+            // Initialize other routes
             this.modules = [
                 new AuthRoute(this.bot),
                 new KycRoute(this.bot),
                 new WalletRoute(this.bot)
             ];
-            console.log('✅ Other modules initialized');
+            
+            console.log('✅ All modules initialized');
         } catch (error) {
             console.error('❌ Error initializing modules:', error);
             throw error;
@@ -281,26 +273,14 @@ export class App {
         try {
             console.log('\n🚀 === STARTING BOT ===');
             
-            // First, delete any webhook to ensure we're in polling mode
             await this.bot.telegram.deleteWebhook();
             console.log('✅ Webhook deleted');
 
-            // Get bot info
             const botInfo = await this.bot.telegram.getMe();
             console.log('✅ Bot info:', botInfo);
-            console.log(`Bot username: @${botInfo.username}`);
 
-            // Test message handler
-            this.bot.on('text', (ctx) => {
-                console.log('📝 Text received:', ctx.message.text);
-            });
-
-            // Launch bot with explicit polling
+            // Fix launch options
             await this.bot.launch({
-                dropPendingUpdates: true,
-                polling: {
-                    timeout: 30
-                },
                 allowedUpdates: [
                     'message',
                     'callback_query',
@@ -314,30 +294,15 @@ export class App {
                 ]
             });
             
-            console.log('✅ Bot launched successfully in polling mode');
-            console.log('🤖 Send a message to the bot to test it!');
-            
-            // Send a test message to verify bot is working
-            if (process.env.NODE_ENV === 'development') {
-                console.log('🔄 Running bot self-test...');
-                try {
-                    const testResult = await this.bot.telegram.getMe();
-                    console.log('✅ Self-test passed:', testResult);
-                } catch (error) {
-                    console.error('❌ Self-test failed:', error);
-                }
-            }
-            
+            console.log('✅ Bot launched successfully');
         } catch (error) {
             console.error('❌ Failed to start bot:', error);
-            
             if (retryCount < this.MAX_RETRIES) {
-                console.log(`Retrying in ${this.RETRY_DELAY/1000} seconds... (Attempt ${retryCount + 1}/${this.MAX_RETRIES})`);
+                console.log(`Retrying in ${this.RETRY_DELAY/1000} seconds...`);
                 await new Promise(resolve => setTimeout(resolve, this.RETRY_DELAY));
                 return this.start(retryCount + 1);
-            } else {
-                throw new Error(`Failed to start bot after ${this.MAX_RETRIES} attempts`);
             }
+            throw new Error(`Failed to start bot after ${this.MAX_RETRIES} attempts`);
         }
     }
 }

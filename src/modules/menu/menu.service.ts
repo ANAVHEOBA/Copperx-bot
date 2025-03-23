@@ -10,8 +10,10 @@ export class MenuService {
     private userStates: Map<number, string> = new Map();
     private tempEmails: Map<number, string> = new Map();
     private tempSids: Map<number, string> = new Map();
+    private transferController: TransferController;
 
     constructor(private bot: Bot) {
+        this.transferController = new TransferController();
         this.initializeStartCommand();
         this.initializeMessageHandler();
         this.initializeCallbackHandler();
@@ -19,11 +21,25 @@ export class MenuService {
 
     private initializeStartCommand(): void {
         this.bot.command('start', async (ctx) => {
-            const isLoggedIn = await SessionManager.getToken(ctx);
-            if (isLoggedIn) {
-                await this.showMainMenu(ctx);
-            } else {
-                await this.showStartMenu(ctx);
+            console.log('🎯 /start command received');
+            try {
+                // First, send welcome message
+                await ctx.reply('Welcome to CopperX Bot! 🚀\n\nI can help you manage your wallet, make transfers, and more.');
+                
+                // Check if user is logged in
+                const isLoggedIn = await SessionManager.getToken(ctx);
+                
+                // Show appropriate menu based on login status
+                if (isLoggedIn) {
+                    await this.showMainMenu(ctx);
+                } else {
+                    await this.showStartMenu(ctx);
+                }
+                
+                console.log('✅ Start command and menu sent');
+            } catch (error) {
+                console.error('❌ Error in start command:', error);
+                await ctx.reply('Sorry, there was an error. Please try again with /start');
             }
         });
     }
@@ -39,6 +55,13 @@ export class MenuService {
                 await this.handleEmailInput(ctx);
             } else if (state === LOGIN_STATES.WAITING_OTP) {
                 await this.handleOTPInput(ctx);
+            } else {
+                // Use the instance variable instead of creating a new one
+                const transferState = this.transferController.getState(userId);
+                
+                if (transferState) {
+                    await this.transferController.handleMessage(ctx);
+                }
             }
         });
     }
@@ -204,8 +227,7 @@ export class MenuService {
                     break;
                 case 'transfer_wallet':
                     await ctx.editMessageText('👛 Starting wallet transfer...');
-                    const walletTransferController = new TransferController();
-                    await walletTransferController.handleWalletTransferStart(ctx);
+                    await this.transferController.handleWalletTransferStart(ctx);
                     break;
                 case 'transfer_bank':
                     await ctx.editMessageText('🏦 Starting bank withdrawal...');
