@@ -28,7 +28,13 @@ export class App {
             throw new Error('TELEGRAM_BOT_TOKEN is required');
         }
         this.bot = new Telegraf<Context>(CONFIG.TELEGRAM.BOT_TOKEN);
+        
+        // Initialize NotificationsService
         this.notificationsService = new NotificationsService(this.bot);
+        
+        // Make it available in context
+        this.bot.context.notificationsService = this.notificationsService;
+        
         this.loadSessions();
         this.initializeMiddlewares();
         this.initializeModules();
@@ -102,6 +108,15 @@ export class App {
         // Setup base handlers
         this.setupBaseHandlers();
 
+        // Fix the message type check
+        this.bot.use(async (ctx, next) => {
+            if ('message' in ctx.update && 'text' in ctx.update.message) {
+                const text = ctx.update.message.text;
+                // ... rest of the code
+            }
+            await next();
+        });
+
         console.log('✅ Middlewares initialized');
     }
 
@@ -148,7 +163,8 @@ export class App {
 
         // Make this the last handler
         this.bot.on('message', async (ctx) => {
-            if (ctx.message.text?.startsWith('/start')) {
+            // Type guard for text messages
+            if ('text' in ctx.message && ctx.message.text?.startsWith('/start')) {
                 // Let MenuService handle /start command
                 return;
             }
@@ -167,17 +183,18 @@ export class App {
         console.log('\n🔧 Initializing modules');
         
         try {
-            // MenuService is already initialized in initializeMiddlewares
+            // Initialize NotificationsService first
+            this.notificationsService = new NotificationsService(this.bot);
             
-            // Initialize transfer route
-            this.transferRoute = new TransferRoute(this.bot);
-            
-            // Initialize other routes
+            // Fix AuthRoute initialization
             this.modules = [
                 new AuthRoute(this.bot),
                 new KycRoute(this.bot),
                 new WalletRoute(this.bot)
             ];
+            
+            // Initialize transfer route
+            this.transferRoute = new TransferRoute(this.bot);
             
             console.log('✅ All modules initialized');
         } catch (error) {
@@ -220,19 +237,22 @@ export class App {
     private setupShutdown(): void {
         const cleanup = async () => {
             console.log('\n🔄 Cleanup requested...');
-            if (this.isShuttingDown) {
-                console.log('❌ Already shutting down, ignoring request');
-                return;
-            }
+            if (this.isShuttingDown) return;
             
             this.isShuttingDown = true;
+            
+            // Unsubscribe all notifications
+            if (this.notificationsService) {
+                // Add method to unsubscribe all
+                await this.notificationsService.unsubscribeAll();
+            }
+            
             console.log('💾 Saving sessions...');
             this.saveSessions();
             
             console.log('🛑 Stopping bot...');
             await this.bot.stop();
             
-            // Add a small delay before exit to allow logs to be written
             setTimeout(() => {
                 console.log('👋 Exiting process...');
                 process.exit(0);

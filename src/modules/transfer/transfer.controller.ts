@@ -326,19 +326,40 @@ export class TransferController {
                 const accessToken = await SessionManager.getToken(ctx);
                 if (!accessToken) return;
 
+                // Convert amount to base units before sending
+                const baseAmount = TransferModel.convertToBaseUnit(
+                    state.data.amount,
+                    state.data.currency
+                );
+
                 const transfer = await TransferCrud.sendTransfer(accessToken, {
-                    amount: state.data.amount,
+                    amount: baseAmount, // Use converted amount
                     currency: state.data.currency,
                     walletAddress: state.data.walletAddress,
-                    purposeCode: 'self'
+                    purposeCode: state.data.purposeCode || 'self'
                 });
 
                 const model = new TransferModel(transfer);
-                await ctx.reply(model.getTransferInfo());
+                await ctx.reply(model.getTransferInfo(), { parse_mode: 'Markdown' });
                 this.resetTransferState(userId);
             } catch (error: any) {
                 console.error('Transfer failed:', error);
-                await ctx.reply(`❌ Transfer failed: ${error.message || 'Unknown error'}`);
+                let errorMessage = '❌ Transfer failed: ';
+                
+                if (error.message && Array.isArray(error.message)) {
+                    // Handle validation errors
+                    const validationErrors = error.message
+                        .map((err: any) => {
+                            const constraints = err.constraints ? Object.values(err.constraints).join(', ') : '';
+                            return `${err.property}: ${constraints}`;
+                        })
+                        .join('\n');
+                    errorMessage += `\n${validationErrors}`;
+                } else {
+                    errorMessage += error.message || 'Unknown error';
+                }
+                
+                await ctx.reply(errorMessage, { parse_mode: 'Markdown' });
                 this.resetTransferState(userId);
             }
         } else if (response.toLowerCase() === 'cancel') {
@@ -405,40 +426,111 @@ export class TransferController {
         }
     }
 
-    async handleListTransfers(ctx: Context): Promise<void> {
+    async handleListTransfers(ctx: Context, page: number = 1): Promise<void> {
+        let loadingMessage: Message.TextMessage | undefined;
+        
         try {
-            const accessToken = await this.checkAuth(ctx);
-            if (!accessToken) return;
+            // Get access token from session
+            const accessToken = await SessionManager.getToken(ctx);
+            if (!accessToken) {
+                await ctx.reply('❌ Please login first using /start');
+                return;
+            }
 
-            const message = ctx.message as Message.TextMessage;
-            const args = message.text.split(' ');
-            const page = args[1] ? parseInt(args[1]) : 1;
-            const limit = args[2] ? parseInt(args[2]) : 5;
+            // Show loading message
+            if ('callback_query' in ctx.update) {
+                await ctx.editMessageText('📋 Fetching transfers...');
+            } else {
+                loadingMessage = await ctx.reply('📋 Fetching transfers...') as Message.TextMessage;
+            }
 
+            // Default parameters
+            const limit = 5;
             const params: TransferListParams = {
                 page,
                 limit,
-                type: ['send', 'receive', 'withdraw']
+                type: ['send', 'receive', 'withdraw', 'deposit']
             };
 
+            console.log('Fetching transfers with params:', params);
             const result = await TransferCrud.listTransfers(accessToken, params);
+            console.log('Transfers response:', result);
+
             let response = `📋 *Transfer List* (Page ${result.page})\n\n`;
             
-            result.data.forEach(transfer => {
-                const model = new TransferModel(transfer);
-                response += model.getTransferSummary() + '\n\n';
-            });
+            if (!result.data || result.data.length === 0) {
+                response += 'No transfers found.';
+            } else {
+                result.data.forEach(transfer => {
+                    const model = new TransferModel(transfer);
+                    response += model.getTransferSummary() + '\n\n';
+                });
 
-            response += `Showing ${result.data.length} of ${result.count} transfers\n`;
-            if (result.hasMore) {
-                response += `Use /list_transfers ${page + 1} to see more`;
+                response += `Showing ${result.data.length} of ${result.count} transfers\n`;
             }
 
-            await ctx.reply(response, { parse_mode: 'Markdown' });
+            // Create pagination buttons
+            const buttons = [];
+            if (page > 1) {
+                buttons.push(Markup.button.callback('⬅️ Previous', `transfer_list_${page - 1}`));
+            }
+            if (result.hasMore) {
+                buttons.push(Markup.button.callback('➡️ Next', `transfer_list_${page + 1}`));
+            }
+            buttons.push(Markup.button.callback('🔄 Refresh', `transfer_list_${page}`));
+            buttons.push(Markup.button.callback('⬅️ Back', 'menu_transfer'));
+
+            const markup = Markup.inlineKeyboard([buttons]);
+
+            // Update or send new message
+            if ('callback_query' in ctx.update) {
+                await ctx.editMessageText(response, { 
+                    parse_mode: 'Markdown',
+                    reply_markup: markup.reply_markup
+                });
+            } else {
+                // Clean up loading message if it exists
+                if (loadingMessage?.message_id) {
+                    try {
+                        await ctx.deleteMessage(loadingMessage.message_id);
+                    } catch (error) {
+                        console.log('Could not delete loading message:', error);
+                    }
+                }
+                
+                await ctx.reply(response, { 
+                    parse_mode: 'Markdown',
+                    reply_markup: markup.reply_markup
+                });
+            }
+
         } catch (error) {
             console.error('Failed to list transfers:', error);
-            await ctx.reply('❌ Failed to list transfers. Please try again.');
+            const errorMessage = '❌ Failed to fetch transfers. Please try again.';
+            
+            if ('callback_query' in ctx.update) {
+                await ctx.editMessageText(errorMessage);
+            } else {
+                // Clean up loading message in case of error
+                if (loadingMessage?.message_id) {
+                    try {
+                        await ctx.deleteMessage(loadingMessage.message_id);
+                    } catch (err) {
+                        console.log('Could not delete loading message:', err);
+                    }
+                }
+                await ctx.reply(errorMessage);
+            }
         }
+    }
+
+    // Add this method to handle pagination callbacks
+    async handleTransferListCallback(ctx: Context, action: string): Promise<void> {
+        const match = action.match(/^transfer_list_(\d+)$/);
+        if (!match) return;
+
+        const page = parseInt(match[1]);
+        await this.handleListTransfers(ctx, page);
     }
 
     async handleTransferHelp(ctx: Context): Promise<void> {
@@ -461,7 +553,7 @@ export class TransferController {
 
         this.setState(userId, {
             step: 'currency',
-            data: { purposeCode: 'email' }
+            data: { purposeCode: 'self' }
         });
 
         await ctx.reply(
@@ -1043,6 +1135,177 @@ export class TransferController {
             let errorMessage = '❌ *Insufficient Balance*\n\n';
             errorMessage += 'You have insufficient balance to complete this transfer.\n';
             errorMessage += 'Please add funds to your wallet and try again.';
+            
+            await ctx.reply(errorMessage, { parse_mode: 'Markdown' });
+            this.resetTransferState(ctx.from!.id);
+        }
+    }
+
+    private async handleEmailTransferFlow(ctx: Context, text: string): Promise<void> {
+        const userId = ctx.from?.id;
+        if (!userId) return;
+
+        const state = this.getState(userId);
+        if (!state) return;
+
+        try {
+            switch (state.step) {
+                case 'currency':
+                    if (!['USDC', 'USDT'].includes(text.toUpperCase())) {
+                        await ctx.reply('❌ Please select a valid currency (USDC or USDT)');
+                        return;
+                    }
+
+                    this.setState(userId, {
+                        step: 'amount',
+                        data: { ...state.data, currency: text.toUpperCase() }
+                    });
+
+                    await ctx.reply(
+                        '💰 Enter the amount to send:',
+                        Markup.keyboard([['Cancel']])
+                            .oneTime()
+                            .resize()
+                    );
+                    break;
+
+                case 'amount':
+                    const amount = text.trim();
+                    if (isNaN(Number(amount)) || Number(amount) <= 0) {
+                        await ctx.reply('❌ Please enter a valid positive number');
+                        return;
+                    }
+
+                    this.setState(userId, {
+                        step: 'email_address',
+                        data: { ...state.data, amount }
+                    });
+
+                    await ctx.reply(
+                        '📧 Enter the recipient\'s email address:',
+                        Markup.keyboard([['Cancel']])
+                            .oneTime()
+                            .resize()
+                    );
+                    break;
+
+                case 'email_address':
+                    const email = text.trim().toLowerCase();
+                    if (!this.isValidEmail(email)) {
+                        await ctx.reply('❌ Please enter a valid email address');
+                        return;
+                    }
+
+                    this.setState(userId, {
+                        step: 'email_confirm',
+                        data: { ...state.data, email }
+                    });
+
+                    const previewMessage = 
+                        `📝 *Transfer Preview*\n\n` +
+                        `To: \`${email}\`\n` +
+                        `Amount: ${state.data.amount} ${state.data.currency}\n\n` +
+                        `Please confirm this transfer:`;
+
+                    await ctx.reply(
+                        previewMessage,
+                        {
+                            parse_mode: 'Markdown',
+                            ...Markup.keyboard([['Confirm', 'Cancel']])
+                                .oneTime()
+                                .resize()
+                        }
+                    );
+                    break;
+
+                case 'email_confirm':
+                    if (text.toLowerCase() !== 'confirm') {
+                        await ctx.reply('❌ Transfer cancelled');
+                        this.resetTransferState(userId);
+                        return;
+                    }
+
+                    await this.executeEmailTransfer(ctx, state);
+                    break;
+            }
+        } catch (error) {
+            console.error('Error in email transfer flow:', error);
+            await ctx.reply('❌ An error occurred. Please try again.');
+            this.resetTransferState(userId);
+        }
+    }
+
+    private async executeEmailTransfer(ctx: Context, state: TransferState): Promise<void> {
+        try {
+            const accessToken = await SessionManager.getToken(ctx);
+            if (!accessToken) return;
+
+            await ctx.reply('⏳ Processing transfer...');
+
+            // First check wallet balance
+            const walletBalances = await TransferCrud.getWalletBalances(accessToken);
+            const currency = state.data.currency!;
+            const amount = TransferModel.convertToBaseUnit(state.data.amount!, currency);
+
+            const balance = Array.isArray(walletBalances) 
+                ? walletBalances.find(b => b?.symbol?.toUpperCase() === currency.toUpperCase())
+                : null;
+
+            if (!balance || Number(balance.balance) < Number(amount)) {
+                const formattedBalance = balance 
+                    ? TransferModel.formatFromBaseUnit(balance.balance, currency)
+                    : '0';
+                const formattedAmount = state.data.amount;
+
+                await ctx.reply(
+                    `❌ *Insufficient Balance*\n\n` +
+                    `Required: ${formattedAmount} ${currency}\n` +
+                    `Available: ${formattedBalance} ${currency}\n\n` +
+                    `Please add funds to your wallet and try again.`,
+                    { parse_mode: 'Markdown' }
+                );
+                this.resetTransferState(ctx.from!.id);
+                return;
+            }
+
+            const transferRequest: TransferRequest = {
+                email: state.data.email!.toLowerCase(),
+                amount,
+                currency: state.data.currency!,
+                purposeCode: 'self'
+            };
+
+            const result = await TransferCrud.sendTransfer(accessToken, transferRequest);
+
+            const successMessage = 
+                `✅ *Transfer Successful*\n\n` +
+                `ID: \`${result.id}\`\n` +
+                `To: \`${state.data.email}\`\n` +
+                `Amount: ${state.data.amount} ${state.data.currency}\n` +
+                `Status: ${result.status}`;
+
+            await ctx.reply(successMessage, { parse_mode: 'Markdown' });
+            this.resetTransferState(ctx.from!.id);
+        } catch (error) {
+            console.error('Failed to execute email transfer:', error);
+            
+            let errorMessage = '❌ *Transfer Failed*\n\n';
+            if (axios.isAxiosError(error) && error.response?.data) {
+                const errorData = error.response.data;
+                if (Array.isArray(errorData.message)) {
+                    // Handle validation errors more specifically
+                    errorMessage += errorData.message
+                        .map((err: any) => {
+                            const constraints = err.constraints ? Object.values(err.constraints).join(', ') : '';
+                            return `${err.property}: ${constraints}`;
+                        })
+                        .join('\n');
+                } else {
+                    errorMessage += errorData.message || 'An unexpected error occurred';
+                }
+            } else {
+                errorMessage += 'An unexpected error occurred';
+            }
             
             await ctx.reply(errorMessage, { parse_mode: 'Markdown' });
             this.resetTransferState(ctx.from!.id);

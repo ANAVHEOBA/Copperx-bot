@@ -1,5 +1,6 @@
 import { Context as TelegrafContext, Telegraf } from 'telegraf';
 import { Update } from 'telegraf/types';
+import { NotificationsService } from '../modules/notifications/notifications.service';
 
 export interface MenuState {
     currentMenu?: string;
@@ -25,6 +26,7 @@ export interface SessionData {
 // Define our custom context type
 export interface Context extends TelegrafContext {
     session: SessionData;
+    notificationsService?: NotificationsService;
 }
 
 // Define the bot type with our custom context

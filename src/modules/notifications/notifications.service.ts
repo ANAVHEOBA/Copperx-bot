@@ -113,4 +113,21 @@ export class NotificationsService {
             console.error('Failed to send deposit notification:', error);
         }
     }
+
+    async unsubscribeAll(): Promise<void> {
+        try {
+            // Unsubscribe from all channels
+            for (const [organizationId] of this.userChannels) {
+                this.unsubscribeFromDeposits(organizationId);
+            }
+            
+            // Clear maps
+            this.userChannels.clear();
+            this.activeTokens.clear();
+            
+            console.log('Successfully unsubscribed from all channels');
+        } catch (error) {
+            console.error('Error unsubscribing from channels:', error);
+        }
+    }
 }

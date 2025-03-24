@@ -3,9 +3,15 @@ import { AuthCrud } from './auth.crud';
 import { AuthModel } from './auth.model';
 import { Context } from '../../types/context'; // Update this import
 import { SessionManager } from '../../utils/session-manager';
+import { NotificationsService } from '../notifications/notifications.service';
 
 export class AuthController {
   private userSessions: Map<number, AuthModel> = new Map();
+  private notificationsService: NotificationsService;
+
+  constructor(notificationsService: NotificationsService) {
+    this.notificationsService = notificationsService;
+  }
 
   async handleLoginRequest(ctx: Context): Promise<void> {
     try {
@@ -78,11 +84,18 @@ export class AuthController {
         sid: authModel.getSid()!
       });
 
-      // Use SessionManager to store token
+      // Store token and org ID
       await SessionManager.setToken(ctx, response.accessToken);
-
-      // Store organization ID in session
       ctx.session.organizationId = response.user.organizationId;
+
+      // Subscribe to deposit notifications
+      if (ctx.from?.id) {
+        this.notificationsService.subscribeToDeposits(
+          response.user.organizationId,
+          ctx.from.id,
+          response.accessToken
+        );
+      }
 
       // Clear the temporary session
       this.userSessions.delete(message.from.id);

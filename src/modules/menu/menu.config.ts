@@ -38,6 +38,7 @@ export const MENUS = {
             { text: '📧 Send to Email', callback: 'transfer_email' },
             { text: '👛 Send to Wallet', callback: 'transfer_wallet' },
             { text: '📤 Batch Transfer', callback: 'transfer_batch' },
+            { text: '📋 List Transfers', callback: 'transfer_list' },
             { text: '🏦 Bank Withdrawal', callback: 'transfer_bank' },
             { text: '💱 Offramp', callback: 'transfer_offramp' },
             { text: '⬅️ Back to Main', callback: 'menu_main' }

@@ -183,10 +183,12 @@ export interface TransferState {
           'offramp_quote' | 'offramp_signature' | 'offramp_wallet' | 
           'offramp_customer_name' | 'offramp_business_name' | 
           'offramp_email' | 'offramp_country' | 'offramp_confirm' |
-          'batch_currency' | 'batch_amount' | 'batch_recipients' | 'batch_confirm';
+          'batch_currency' | 'batch_amount' | 'batch_recipients' | 'batch_confirm' |
+          'email_address' | 'email_confirm';
     data: {
         currency?: string;
         amount?: string;
+        email?: string;
         recipients?: string[];
         batchTransfers?: {
             email?: string;

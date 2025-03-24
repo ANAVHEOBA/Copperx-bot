@@ -2,12 +2,12 @@ import { Context, Bot } from '../../types/context';
 import { AuthController } from './auth.controller';
 
 export class AuthRoute {
-    private bot: Bot;
     private controller: AuthController;
 
-    constructor(bot: Bot) {
-        this.bot = bot;
-        this.controller = new AuthController();
+    constructor(private bot: Bot) {
+        // Get NotificationsService from bot context
+        const notificationsService = (bot as any).context.notificationsService;
+        this.controller = new AuthController(notificationsService);
         this.initializeRoutes();
     }
 

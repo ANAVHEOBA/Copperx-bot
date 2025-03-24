@@ -148,12 +148,11 @@ export class TransferCrud {
         } catch (error) {
             if (axios.isAxiosError(error)) {
                 console.error('List Transfers Error:', error.response?.data);
-                const errorResponse: ErrorResponseDto = {
-                    message: error.response?.data?.message || 'Failed to list transfers',
-                    statusCode: error.response?.status || 500,
-                    error: error.response?.data?.error || error.message
+                throw error.response?.data || {
+                    message: 'Failed to list transfers',
+                    statusCode: 500,
+                    error: error.message
                 };
-                throw errorResponse;
             }
             throw error;
         }

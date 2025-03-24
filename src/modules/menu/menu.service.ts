@@ -243,6 +243,11 @@ export class MenuService {
                     await ctx.editMessageText('💱 Starting offramp transfer...');
                     await this.transferController.handleOfframpTransferStart(ctx);
                     break;
+                case 'transfer_list':
+                    await ctx.editMessageText('📋 Fetching your transfers...');
+                    const transferController = new TransferController();
+                    await transferController.handleListTransfers(ctx);
+                    break;
                 default:
                     await ctx.reply('⚠️ Unknown action requested');
             }

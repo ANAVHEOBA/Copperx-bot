@@ -25,7 +25,7 @@ export class TransferModel {
             `To: ${this.getDestinationInfo()}`;
     }
 
-    private static getStatusEmoji(status: Transfer['status']): string {
+    private static getStatusEmoji(status: string): string {
         switch (status) {
             case 'completed': return '✅';
             case 'pending': return '⏳';
@@ -119,7 +119,9 @@ export class TransferModel {
 
     static convertToBaseUnit(amount: string, currency: string): string {
         const numAmount = parseFloat(amount);
-        if (isNaN(numAmount)) return amount;
+        if (isNaN(numAmount)) {
+            throw new Error('Invalid amount format');
+        }
 
         let decimals = 0;
         switch (currency.toUpperCase()) {
@@ -130,10 +132,14 @@ export class TransferModel {
                 decimals = this.USDT_DECIMALS;
                 break;
             default:
-                return amount;
+                throw new Error('Unsupported currency');
         }
 
-        return (numAmount * Math.pow(10, decimals)).toString();
+        // Use BigInt to handle large numbers properly
+        const multiplier = BigInt(10 ** decimals);
+        const baseAmount = BigInt(Math.round(numAmount * (10 ** decimals)));
+        
+        return baseAmount.toString();
     }
 
     static formatFromBaseUnit(amount: string, currency: string): string {

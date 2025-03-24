@@ -116,5 +116,20 @@ export class TransferRoute {
             console.log('📤 Batch transfer selected');
             await this.controller.handleBatchTransferStart(ctx);
         });
+
+        // Add list transfers command
+        this.bot.command('list_transfers', async (ctx) => {
+            await this.controller.handleListTransfers(ctx);
+        });
+
+        // Add callback handler for transfer list pagination
+        this.bot.action(/^transfer_list_\d+$/, async (ctx) => {
+            await this.controller.handleTransferListCallback(ctx, ctx.match[0]);
+        });
+
+        // Add menu action handler
+        this.bot.action('transfer_list', async (ctx) => {
+            await this.controller.handleListTransfers(ctx);
+        });
     }
 } 
