@@ -1,30 +1,7 @@
 import { Context, Bot } from '../../types/context';
 import { TransferController } from './transfer.controller';
 import { Markup } from 'telegraf';
-
-// Import TransferState interface
-interface TransferState {
-    step: 'currency' | 'amount' | 'wallet' | 'confirm' | 
-          'offramp_quote' | 'offramp_signature' | 'offramp_wallet' | 
-          'offramp_customer_name' | 'offramp_business_name' | 
-          'offramp_email' | 'offramp_country' | 'offramp_confirm';
-    data: {
-        currency?: string;
-        amount?: string;
-        walletAddress?: string;
-        purposeCode?: string;
-        quotePayload?: string;
-        quoteSignature?: string;
-        preferredWalletId?: string;
-        customerData?: {
-            name: string;
-            businessName: string;
-            email: string;
-            country: string;
-        };
-        preferredBankAccountId?: string;
-    };
-}
+import { TransferState } from './transfer.schema';
 
 export class TransferRoute {
     private controller: TransferController;
@@ -132,6 +109,12 @@ export class TransferRoute {
         this.bot.action('offramp', async (ctx) => {
             console.log('💱 Offramp action triggered');
             await this.controller.handleOfframpTransferStart(ctx);
+        });
+
+        // Add batch transfer action
+        this.bot.action('transfer_batch', async (ctx) => {
+            console.log('📤 Batch transfer selected');
+            await this.controller.handleBatchTransferStart(ctx);
         });
     }
 } 

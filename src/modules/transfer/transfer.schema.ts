@@ -177,3 +177,34 @@ export interface OfframpQuote {
     payload: string;
     signature: string;
 }
+
+export interface TransferState {
+    step: 'currency' | 'amount' | 'wallet' | 'confirm' | 
+          'offramp_quote' | 'offramp_signature' | 'offramp_wallet' | 
+          'offramp_customer_name' | 'offramp_business_name' | 
+          'offramp_email' | 'offramp_country' | 'offramp_confirm' |
+          'batch_currency' | 'batch_amount' | 'batch_recipients' | 'batch_confirm';
+    data: {
+        currency?: string;
+        amount?: string;
+        recipients?: string[];
+        batchTransfers?: {
+            email?: string;
+            walletAddress?: string;
+            amount: string;
+            currency: string;
+        }[];
+        walletAddress?: string;
+        purposeCode?: string;
+        quotePayload?: string;
+        quoteSignature?: string;
+        preferredWalletId?: string;
+        customerData?: {
+            name: string;
+            businessName: string;
+            email: string;
+            country: string;
+        };
+        preferredBankAccountId?: string;
+    };
+}

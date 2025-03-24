@@ -10,33 +10,12 @@ import {
     BatchTransferRequest, 
     BatchTransferRequestPayload, 
     TransferListParams,
-    Transfer
+    Transfer,
+    TransferState
 } from './transfer.schema';
 import { Markup } from 'telegraf';
 import { sendMessageWithRetry } from '../../utils/telegram-helpers';
-
-interface TransferState {
-    step: 'currency' | 'amount' | 'wallet' | 'confirm' | 
-          'offramp_quote' | 'offramp_signature' | 'offramp_wallet' | 
-          'offramp_customer_name' | 'offramp_business_name' | 
-          'offramp_email' | 'offramp_country' | 'offramp_confirm';
-    data: {
-        currency?: string;
-        amount?: string;
-        walletAddress?: string;
-        purposeCode?: string;
-        quotePayload?: string;
-        quoteSignature?: string;
-        preferredWalletId?: string;
-        customerData?: {
-            name: string;
-            businessName: string;
-            email: string;
-            country: string;
-        };
-        preferredBankAccountId?: string;
-    };
-}
+import axios from 'axios';
 
 interface WalletBalance {
     symbol: string;
@@ -132,6 +111,12 @@ export class TransferController {
                 case 'offramp_country':
                 case 'offramp_confirm':
                     await this.handleOfframpFlow(ctx, ctx.message.text);
+                    break;
+                case 'batch_currency':
+                case 'batch_amount':
+                case 'batch_recipients':
+                case 'batch_confirm':
+                    await this.handleBatchTransferFlow(ctx, ctx.message.text);
                     break;
                 default:
                     console.log('Unknown step:', state.step);
@@ -541,20 +526,23 @@ export class TransferController {
     }
 
     async handleBatchTransferStart(ctx: Context): Promise<void> {
-        console.log('\n📤 Starting batch transfer flow');
         const userId = ctx.from?.id;
         if (!userId) return;
 
         this.setState(userId, {
-            step: 'currency',
-            data: { purposeCode: 'batch' }
+            step: 'batch_currency',
+            data: {}
         });
 
         await ctx.reply(
-            '💱 Select currency to send:',
-            Markup.keyboard([['USDC', 'USDT']])
-                .oneTime()
-                .resize()
+            '💱 *Batch Transfer*\n\n' +
+            'Please select the currency you want to send:',
+            {
+                parse_mode: 'Markdown',
+                ...Markup.keyboard([['USDC', 'USDT'], ['Cancel']])
+                    .oneTime()
+                    .resize()
+            }
         );
     }
 
@@ -854,44 +842,209 @@ export class TransferController {
         return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
     }
 
-    private async handleOfframpQuote(ctx: Context, state: TransferState): Promise<void> {
+    private async handleBatchTransferFlow(ctx: Context, text: string): Promise<void> {
+        const userId = ctx.from?.id;
+        if (!userId) return;
+
+        const state = this.getState(userId);
+        if (!state) return;
+
+        try {
+            switch (state.step) {
+                case 'batch_currency':
+                    if (!['USDC', 'USDT'].includes(text.toUpperCase())) {
+                        await ctx.reply('Please select a valid currency (USDC or USDT)');
+                        return;
+                    }
+
+                    this.setState(userId, {
+                        step: 'batch_amount',
+                        data: { ...state.data, currency: text.toUpperCase() }
+                    });
+
+                    await ctx.reply(
+                        '💰 Enter the amount to send to each recipient:',
+                        Markup.keyboard([['Cancel']])
+                            .oneTime()
+                            .resize()
+                    );
+                    break;
+
+                case 'batch_amount':
+                    const amount = text.trim();
+                    if (isNaN(Number(amount)) || Number(amount) <= 0) {
+                        await ctx.reply('Please enter a valid positive number');
+                        return;
+                    }
+
+                    this.setState(userId, {
+                        step: 'batch_recipients',
+                        data: { ...state.data, amount }
+                    });
+
+                    await ctx.reply(
+                        '📧 Enter recipient addresses or emails\n\n' +
+                        'You can enter multiple recipients, one per line:\n' +
+                        'Example:\n' +
+                        'user1@email.com\n' +
+                        '0x123...def\n' +
+                        'user2@email.com\n\n' +
+                        '_Send the message when you\'re done._',
+                        {
+                            parse_mode: 'Markdown',
+                            ...Markup.keyboard([['Cancel']])
+                                .oneTime()
+                                .resize()
+                        }
+                    );
+                    break;
+
+                case 'batch_recipients':
+                    const recipients = text.split('\n')
+                        .map(r => r.trim())
+                        .filter(r => r.length > 0);
+
+                    if (recipients.length === 0) {
+                        await ctx.reply('Please enter at least one recipient');
+                        return;
+                    }
+
+                    const batchTransfers = recipients.map(recipient => ({
+                        ...(recipient.includes('@') 
+                            ? { email: recipient } 
+                            : { walletAddress: recipient }),
+                        amount: state.data.amount!,
+                        currency: state.data.currency!
+                    }));
+
+                    this.setState(userId, {
+                        step: 'batch_confirm',
+                        data: { 
+                            ...state.data, 
+                            recipients,
+                            batchTransfers
+                        }
+                    });
+
+                    // Show confirmation message
+                    await ctx.reply(
+                        this.formatBatchPreview(batchTransfers),
+                        {
+                            parse_mode: 'Markdown',
+                            ...Markup.keyboard([['Confirm', 'Cancel']])
+                                .oneTime()
+                                .resize()
+                        }
+                    );
+                    break;
+
+                case 'batch_confirm':
+                    if (text.toLowerCase() !== 'confirm') {
+                        await ctx.reply('Transfer cancelled');
+                        this.resetTransferState(userId);
+                        return;
+                    }
+
+                    await this.executeBatchTransfer(ctx, state);
+                    break;
+            }
+        } catch (error) {
+            console.error('Error in batch transfer flow:', error);
+            await ctx.reply('❌ An error occurred. Please try again.');
+            this.resetTransferState(userId);
+        }
+    }
+
+    private formatBatchPreview(transfers: any[]): string {
+        const total = transfers.reduce((sum, t) => sum + Number(t.amount), 0);
+        
+        return `📝 *Batch Transfer Preview*\n\n` +
+            `Recipients: ${transfers.length}\n` +
+            `Amount per recipient: ${transfers[0].amount} ${transfers[0].currency}\n` +
+            `Total amount: ${total} ${transfers[0].currency}\n\n` +
+            `Recipients:\n` +
+            transfers.map((t, i) => 
+                `${i + 1}. ${t.email || t.walletAddress}`
+            ).join('\n') +
+            '\n\nPlease confirm to proceed with the transfers.';
+    }
+
+    private async executeBatchTransfer(ctx: Context, state: TransferState): Promise<void> {
         try {
             const accessToken = await SessionManager.getToken(ctx);
             if (!accessToken) return;
 
-            const quote = await TransferCrud.getOfframpQuote(accessToken, {
-                amount: state.data.amount!,
-                currency: state.data.currency!,
-                destinationCurrency: 'USD',
-                sourceCountry: 'none',
-                destinationCountry: 'none',
-                onlyRemittance: true,
-                preferredBankAccountId: state.data.preferredBankAccountId
-            });
+            await ctx.reply('⏳ Processing batch transfer...');
 
-            // Store quote data
-            this.setState(ctx.from!.id, {
-                step: 'confirm',
-                data: {
-                    ...state.data,
-                    quotePayload: quote.payload,
-                    quoteSignature: quote.signature
-                }
-            });
-
-            // Show quote details
-            await ctx.reply(
-                TransferModel.formatQuoteDetails(quote),
-                {
-                    parse_mode: 'Markdown',
-                    ...Markup.keyboard([['Confirm', 'Cancel']])
-                        .oneTime()
-                        .resize()
-                }
+            // First check wallet balance
+            const walletBalances = await TransferCrud.getWalletBalances(accessToken);
+            const currency = state.data.currency!;
+            const totalAmount = state.data.batchTransfers!.reduce(
+                (sum, t) => sum + Number(TransferModel.convertToBaseUnit(t.amount, t.currency)), 
+                0
             );
+
+            // Safely find balance, handling undefined case
+            const balance = Array.isArray(walletBalances) 
+                ? walletBalances.find(b => b?.symbol?.toUpperCase() === currency.toUpperCase())
+                : null;
+
+            // If no balance found or insufficient balance, show error
+            const formattedBalance = balance 
+                ? TransferModel.formatFromBaseUnit(balance.balance, currency)
+                : '0';
+            const formattedAmount = TransferModel.formatFromBaseUnit(totalAmount.toString(), currency);
+
+            if (!balance || Number(balance.balance) < totalAmount) {
+                await ctx.reply(
+                    `❌ *Insufficient Balance*\n\n` +
+                    `Required: ${formattedAmount} ${currency}\n` +
+                    `Available: ${formattedBalance} ${currency}\n\n` +
+                    `Please add funds to your wallet and try again.`,
+                    { parse_mode: 'Markdown' }
+                );
+                this.resetTransferState(ctx.from!.id);
+                return;
+            }
+
+            // Proceed with transfer if balance is sufficient
+            const batchTransfers = state.data.batchTransfers!.map((transfer, index) => {
+                const amount = TransferModel.convertToBaseUnit(transfer.amount, transfer.currency);
+                return {
+                    requestId: `batch-${Date.now()}-${index}`,
+                    request: {
+                        amount,
+                        currency: transfer.currency.toUpperCase(),
+                        purposeCode: 'self',
+                        ...(transfer.email 
+                            ? { email: transfer.email.toLowerCase() } 
+                            : { walletAddress: transfer.walletAddress })
+                    }
+                };
+            });
+
+            const data: BatchTransferRequestPayload = { 
+                requests: batchTransfers
+            };
+
+            console.log('Sending batch transfer request:', JSON.stringify(data, null, 2));
+
+            const result = await TransferCrud.sendBatchTransfer(accessToken, data);
+
+            await ctx.reply(
+                TransferModel.getBatchTransferInfo(result.responses),
+                { parse_mode: 'Markdown' }
+            );
+
+            this.resetTransferState(ctx.from!.id);
         } catch (error) {
-            console.error('Error getting quote:', error);
-            await ctx.reply('❌ Failed to get quote. Please try again.');
+            console.error('Failed to execute batch transfer:', error);
+            
+            let errorMessage = '❌ *Insufficient Balance*\n\n';
+            errorMessage += 'You have insufficient balance to complete this transfer.\n';
+            errorMessage += 'Please add funds to your wallet and try again.';
+            
+            await ctx.reply(errorMessage, { parse_mode: 'Markdown' });
             this.resetTransferState(ctx.from!.id);
         }
     }

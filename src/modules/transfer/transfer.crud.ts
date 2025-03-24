@@ -100,6 +100,9 @@ export class TransferCrud {
     }
 
     static async sendBatchTransfer(accessToken: string, data: BatchTransferRequestPayload): Promise<BatchTransferResponsePayload> {
+        console.log('\n🔄 === SENDING BATCH TRANSFER ===');
+        console.log('Request payload:', JSON.stringify(data, null, 2));
+
         try {
             const response = await axios.post<BatchTransferResponsePayload>(
                 `${CONFIG.API.BASE_URL}/api/transfers/send-batch`,
@@ -111,16 +114,19 @@ export class TransferCrud {
                     }
                 }
             );
+            
+            console.log('✅ Batch transfer successful:', JSON.stringify(response.data, null, 2));
             return response.data;
         } catch (error) {
             if (axios.isAxiosError(error)) {
-                console.error('Batch Transfer Error:', error.response?.data);
-                const errorResponse: ErrorResponseDto = {
-                    message: error.response?.data?.message || 'Failed to send batch transfer',
-                    statusCode: error.response?.status || 500,
-                    error: error.response?.data?.error || error.message
-                };
-                throw errorResponse;
+                console.error('❌ Batch Transfer Error:', {
+                    status: error.response?.status,
+                    data: error.response?.data,
+                    message: error.message
+                });
+
+                // Throw the error with the original response data
+                throw error;
             }
             throw error;
         }
