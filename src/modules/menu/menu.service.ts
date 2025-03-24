@@ -5,6 +5,7 @@ import { SessionManager } from '../../utils/session-manager';
 import { AuthCrud } from '../auth/auth.crud';
 import { WalletController } from '../wallet/wallet.controller';
 import { TransferController } from '../transfer/transfer.controller';
+import { KycCrud } from '../kyc/kyc.crud';
 
 export class MenuService {
     private userStates: Map<number, string> = new Map();
@@ -109,11 +110,11 @@ export class MenuService {
             return;
         }
 
-        const keyboard = Markup.inlineKeyboard(
-            this.createButtonRows(MENUS.MAIN.options)
-        );
-
-        await ctx.reply(MENUS.MAIN.title, keyboard);
+        await ctx.reply(MENUS.MAIN.title, {
+            reply_markup: {
+                inline_keyboard: this.createButtonRows(MENUS.MAIN.options)
+            }
+        });
     }
 
     public async handleMenuAction(ctx: Context): Promise<void> {
@@ -165,13 +166,14 @@ export class MenuService {
         }
     }
 
-    private createButtonRows(options: Array<{ text: string; callback: string }>): any[][] {
-        const buttons = options.map(option => 
-            Markup.button.callback(option.text, option.callback)
-        );
+    private createButtonRows(options: Array<{ text: string; callback: string }>): Array<Array<{ text: string; callback_data: string }>> {
+        const buttons = options.map(option => ({
+            text: option.text,
+            callback_data: option.callback
+        }));
         
         // Create rows of 2 buttons each
-        const rows: any[][] = [];
+        const rows: Array<Array<{ text: string; callback_data: string }>> = [];
         for (let i = 0; i < buttons.length; i += 2) {
             rows.push(buttons.slice(i, i + 2));
         }
@@ -179,15 +181,13 @@ export class MenuService {
     }
 
     private async handleSpecificAction(ctx: Context, action: string): Promise<void> {
-        const isLoggedIn = await SessionManager.getToken(ctx);
-        if (!isLoggedIn) {
-            await this.showStartMenu(ctx);
-            return;
-        }
-
-        await ctx.answerCbQuery();
-        
         try {
+            const token = await SessionManager.getToken(ctx);
+            if (!token) {
+                await ctx.editMessageText('❌ Please login first');
+                return;
+            }
+
             switch (action) {
                 case 'wallet_balance':
                     await ctx.editMessageText('📊 Fetching your balance...');
@@ -248,12 +248,160 @@ export class MenuService {
                     const transferController = new TransferController();
                     await transferController.handleListTransfers(ctx);
                     break;
+                case 'account_profile':
+                    await this.handleProfile(ctx);
+                    break;
+                case 'account_settings':
+                    await ctx.editMessageText(
+                        '⚙️ Account settings are managed on the web platform.\n\n' +
+                        'Please visit: https://payout.copperx.io',
+                        {
+                            reply_markup: {
+                                inline_keyboard: [[
+                                    { text: '⬅️ Back', callback_data: 'menu_account' }
+                                ]]
+                            }
+                        }
+                    );
+                    break;
+                case 'account_2fa':
+                    await ctx.editMessageText(
+                        '🔐 2FA setup must be done on the web platform.\n\n' + 
+                        'Please visit: https://payout.copperx.io',
+                        {
+                            reply_markup: {
+                                inline_keyboard: [[
+                                    { text: '⬅️ Back', callback_data: 'menu_account' }
+                                ]]
+                            }
+                        }
+                    );
+                    break;
+                case 'menu_account':
+                    await ctx.editMessageText(
+                        MENUS.ACCOUNT.title,
+                        {
+                            reply_markup: {
+                                inline_keyboard: this.createButtonRows(MENUS.ACCOUNT.options)
+                            }
+                        }
+                    );
+                    break;
+                case 'kyc_status':
+                    try {
+                        const response = await KycCrud.getKycList(token);
+                        if (response.data.length === 0) {
+                            await ctx.editMessageText('No KYC records found', {
+                                reply_markup: {
+                                    inline_keyboard: [[
+                                        { text: '⬅️ Back', callback_data: 'menu_kyc' }
+                                    ]]
+                                }
+                            });
+                            return;
+                        }
+
+                        const kycList = response.data.map((kyc, index) => 
+                            `${index + 1}. ID: ${kyc.id}\n` +
+                            `   Status: ${kyc.status}\n` +
+                            `   Type: ${kyc.type}\n` +
+                            `   Country: ${kyc.country}\n`
+                        ).join('\n');
+
+                        await ctx.editMessageText(
+                            `📋 *KYC Status*\n\n${kycList}\n\n` +
+                            `Page ${response.page} of ${Math.ceil(response.count / response.limit)}`,
+                            {
+                                parse_mode: 'Markdown',
+                                reply_markup: {
+                                    inline_keyboard: [[
+                                        { text: '⬅️ Back', callback_data: 'menu_kyc' }
+                                    ]]
+                                }
+                            }
+                        );
+                    } catch (error) {
+                        console.error('KYC status error:', error);
+                        await ctx.editMessageText(
+                            '❌ Failed to fetch KYC status. Please try again.',
+                            {
+                                reply_markup: {
+                                    inline_keyboard: [[
+                                        { text: '⬅️ Back', callback_data: 'menu_kyc' }
+                                    ]]
+                                }
+                            }
+                        );
+                    }
+                    break;
+                case 'kyc_submit':
+                    await ctx.editMessageText(
+                        '📝 To submit your KYC:\n\n' +
+                        '1. Please visit our web platform\n' +
+                        '2. Complete the verification process\n' +
+                        '3. Upload required documents\n\n' +
+                        'Visit: https://payout.copperx.io',
+                        {
+                            reply_markup: {
+                                inline_keyboard: [[
+                                    { text: '⬅️ Back', callback_data: 'menu_kyc' }
+                                ]]
+                            }
+                        }
+                    );
+                    break;
+                case 'kyc_documents':
+                    await ctx.editMessageText(
+                        '📎 To view or manage your KYC documents, please visit our web platform:\n\n' +
+                        'https://payout.copperx.io',
+                        {
+                            reply_markup: {
+                                inline_keyboard: [[
+                                    { text: '⬅️ Back', callback_data: 'menu_kyc' }
+                                ]]
+                            }
+                        }
+                    );
+                    break;
+                case 'menu_kyc':
+                    await ctx.editMessageText(
+                        MENUS.KYC.title,
+                        {
+                            reply_markup: {
+                                inline_keyboard: this.createButtonRows(MENUS.KYC.options)
+                            }
+                        }
+                    );
+                    break;
+                case 'account_logout':
+                    try {
+                        await AuthCrud.logout(token);
+                        await SessionManager.clearSession(ctx);
+                        
+                        await ctx.editMessageText('✅ Successfully logged out!');
+                        
+                        // Show start menu
+                        await this.showStartMenu(ctx);
+                    } catch (error: any) {
+                        console.error('Logout error:', error);
+                        await ctx.editMessageText(
+                            '❌ Logout failed. Please try again.',
+                            {
+                                reply_markup: {
+                                    inline_keyboard: [[
+                                        { text: '⬅️ Back', callback_data: 'menu_account' }
+                                    ]]
+                                }
+                            }
+                        );
+                    }
+                    break;
                 default:
                     await ctx.reply('⚠️ Unknown action requested');
             }
         } catch (error) {
             console.error('Specific action error:', error);
-            await ctx.reply('❌ An error occurred while processing your request. Please try again.');
+            await ctx.reply('❌ An error occurred. Please try again.');
         }
     }
 
@@ -367,13 +515,55 @@ export class MenuService {
         }
     }
 
+    private async handleProfile(ctx: Context): Promise<void> {
+        try {
+            const token = await SessionManager.getToken(ctx);
+            if (!token) {
+                await ctx.editMessageText('Please login first');
+                return;
+            }
+
+            const profile = await AuthCrud.getProfile(token);
+            await ctx.editMessageText(
+                `👤 *Your Profile*\n\n` +
+                `Name: ${profile.firstName} ${profile.lastName}\n` +
+                `Email: ${profile.email}\n` +
+                `Role: ${profile.role}\n` +
+                `Status: ${profile.status}\n` +
+                `Type: ${profile.type}\n` +
+                `Organization ID: ${profile.organizationId}`,
+                {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [[
+                            { text: '⬅️ Back', callback_data: 'menu_account' }
+                        ]]
+                    }
+                }
+            );
+        } catch (error: any) {
+            console.error('Profile error:', error);
+            await ctx.editMessageText(
+                '❌ Failed to fetch profile. Please try again.',
+                {
+                    reply_markup: {
+                        inline_keyboard: [[
+                            { text: '⬅️ Back', callback_data: 'menu_account' }
+                        ]]
+                    }
+                }
+            );
+        }
+    }
+
+    private isValidEmail(email: string): boolean {
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        return emailRegex.test(email);
+    }
+
     private resetUserState(userId: number): void {
         this.userStates.delete(userId);
         this.tempEmails.delete(userId);
         this.tempSids.delete(userId);
     }
-
-    private isValidEmail(email: string): boolean {
-        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-    }
-} 
+}

@@ -5,7 +5,8 @@ import {
   VerifyOtpRequestDto,
   AuthResponseDto,
   ErrorResponseDto,
-  UserProfileDto 
+  UserProfileDto,
+  LogoutResponseDto
 } from './auth.schema';
 import { CONFIG } from '../../config/env';
 
@@ -71,6 +72,7 @@ export class AuthCrud {
 
   static async getProfile(accessToken: string): Promise<UserProfileDto> {
     try {
+      console.log('Fetching profile with token:', accessToken.substring(0, 10) + '...');
       const response = await axios.get<UserProfileDto>(
         `${CONFIG.API.BASE_URL}/api/auth/me`,
         {
@@ -81,11 +83,38 @@ export class AuthCrud {
         }
       );
 
+      console.log('Profile response:', response.data);
+      return response.data;
+    } catch (error) {
+      console.error('Profile fetch error:', error);
+      if (axios.isAxiosError(error)) {
+        const errorResponse: ErrorResponseDto = {
+          message: error.response?.data?.message || 'Failed to fetch profile',
+          statusCode: error.response?.status || 500,
+          error: error.message
+        };
+        throw errorResponse;
+      }
+      throw error;
+    }
+  }
+
+  static async logout(accessToken: string): Promise<LogoutResponseDto> {
+    try {
+      const response = await axios.post<LogoutResponseDto>(
+        `${CONFIG.API.BASE_URL}/api/auth/logout`,
+        {},
+        {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`
+          }
+        }
+      );
       return response.data;
     } catch (error) {
       if (axios.isAxiosError(error)) {
         const errorResponse: ErrorResponseDto = {
-          message: error.response?.data?.message || 'Unknown error',
+          message: error.response?.data?.message || 'Logout failed',
           statusCode: error.response?.status || 500,
           error: error.message
         };

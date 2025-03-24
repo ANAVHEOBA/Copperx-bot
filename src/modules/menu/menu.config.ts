@@ -50,6 +50,7 @@ export const MENUS = {
             { text: '👤 View Profile', callback: 'account_profile' },
             { text: '🔑 Change Settings', callback: 'account_settings' },
             { text: '📱 2FA Setup', callback: 'account_2fa' },
+            { text: '🚪 Logout', callback: 'account_logout' },
             { text: '⬅️ Back to Main', callback: 'menu_main' }
         ]
     },

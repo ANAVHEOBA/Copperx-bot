@@ -60,3 +60,8 @@ export interface EmailOtpRequestDto {
     walletId: string;
     walletAccountType: string;
   }
+
+  export interface LogoutResponseDto {
+    message: string;
+    statusCode: number;
+  }

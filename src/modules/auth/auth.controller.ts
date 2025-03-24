@@ -4,6 +4,7 @@ import { AuthModel } from './auth.model';
 import { Context } from '../../types/context'; // Update this import
 import { SessionManager } from '../../utils/session-manager';
 import { NotificationsService } from '../notifications/notifications.service';
+import { MENUS } from '../menu/menu.config';
 
 export class AuthController {
   private userSessions: Map<number, AuthModel> = new Map();
@@ -150,5 +151,47 @@ export class AuthController {
       console.error('Profile error:', error);
       await ctx.reply(`❌ Failed to fetch profile: ${error.message}`);
     }
+  }
+
+  async handleLogout(ctx: Context): Promise<void> {
+    try {
+      const token = await SessionManager.getToken(ctx);
+      if (!token) {
+        await ctx.reply('You are not logged in.');
+        return;
+      }
+
+      await AuthCrud.logout(token);
+      await SessionManager.clearSession(ctx);
+      
+      await ctx.reply('✅ Successfully logged out!');
+      
+      // Show start menu
+      await ctx.reply(
+        MENUS.START.title,
+        {
+          reply_markup: {
+            inline_keyboard: this.createButtonRows(MENUS.START.options)
+          }
+        }
+      );
+    } catch (error: any) {
+      console.error('Logout error:', error);
+      await ctx.reply(`❌ Logout failed: ${error.message}`);
+    }
+  }
+
+  private createButtonRows(options: Array<{ text: string, callback: string }>) {
+    const buttons = options.map(option => ({
+      text: option.text,
+      callback_data: option.callback
+    }));
+    
+    // Create rows of 2 buttons each
+    const rows = [];
+    for (let i = 0; i < buttons.length; i += 2) {
+      rows.push(buttons.slice(i, i + 2));
+    }
+    return rows;
   }
 }
