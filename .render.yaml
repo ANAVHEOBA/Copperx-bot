@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: copperx-bot
+    env: node
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: API_BASE_URL
+        value: https://income-api.copperx.io
+      - key: PUSHER_KEY
+        value: e089376087cac1a62785
+      - key: PUSHER_CLUSTER
+        value: ap1 

@@ -79,6 +79,10 @@ export class App {
     }
 
     private initializeMiddlewares(): void {
+        if (process.env.NODE_ENV === 'production') {
+            console.log('Running in production mode on Render');
+        }
+        
         console.log('\n🔄 === INITIALIZING MIDDLEWARES ===');
         
         // Debug middleware - MUST be first
@@ -292,9 +296,20 @@ export class App {
     public async start(retryCount = 0): Promise<void> {
         try {
             console.log('\n🚀 === STARTING BOT ===');
+            console.log('Environment:', process.env.NODE_ENV);
+            console.log('Running on Render:', process.env.RENDER === 'true');
             
-            await this.bot.telegram.deleteWebhook();
-            console.log('✅ Webhook deleted');
+            // Add Render-specific webhook handling
+            if (process.env.RENDER === 'true') {
+                const webhookDomain = process.env.RENDER_EXTERNAL_URL;
+                if (webhookDomain) {
+                    await this.bot.telegram.setWebhook(`${webhookDomain}/webhook`);
+                    console.log('Webhook set for Render deployment');
+                }
+            } else {
+                await this.bot.telegram.deleteWebhook();
+                console.log('✅ Webhook deleted for local deployment');
+            }
 
             const botInfo = await this.bot.telegram.getMe();
             console.log('✅ Bot info:', botInfo);
