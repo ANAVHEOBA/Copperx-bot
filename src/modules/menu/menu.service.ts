@@ -239,6 +239,10 @@ export class MenuService {
                     const batchTransferController = new TransferController();
                     await batchTransferController.handleBatchTransferStart(ctx);
                     break;
+                case 'transfer_offramp':
+                    await ctx.editMessageText('💱 Starting offramp transfer...');
+                    await this.transferController.handleOfframpTransferStart(ctx);
+                    break;
                 default:
                     await ctx.reply('⚠️ Unknown action requested');
             }

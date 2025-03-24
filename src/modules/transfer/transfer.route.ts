@@ -4,12 +4,25 @@ import { Markup } from 'telegraf';
 
 // Import TransferState interface
 interface TransferState {
-    step: 'currency' | 'amount' | 'wallet' | 'confirm';
+    step: 'currency' | 'amount' | 'wallet' | 'confirm' | 
+          'offramp_quote' | 'offramp_signature' | 'offramp_wallet' | 
+          'offramp_customer_name' | 'offramp_business_name' | 
+          'offramp_email' | 'offramp_country' | 'offramp_confirm';
     data: {
         currency?: string;
         amount?: string;
         walletAddress?: string;
         purposeCode?: string;
+        quotePayload?: string;
+        quoteSignature?: string;
+        preferredWalletId?: string;
+        customerData?: {
+            name: string;
+            businessName: string;
+            email: string;
+            country: string;
+        };
+        preferredBankAccountId?: string;
     };
 }
 
@@ -107,6 +120,18 @@ export class TransferRoute {
         // Add withdraw command
         this.bot.command('withdraw', async (ctx) => {
             await this.controller.handleTransferStart(ctx);
+        });
+
+        // Add offramp command
+        this.bot.command('offramp', async (ctx) => {
+            console.log('💱 Starting offramp flow');
+            await this.controller.handleOfframpTransferStart(ctx);
+        });
+
+        // Add offramp action
+        this.bot.action('offramp', async (ctx) => {
+            console.log('💱 Offramp action triggered');
+            await this.controller.handleOfframpTransferStart(ctx);
         });
     }
 } 

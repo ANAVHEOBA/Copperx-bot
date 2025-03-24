@@ -16,14 +16,25 @@ import { Markup } from 'telegraf';
 import { sendMessageWithRetry } from '../../utils/telegram-helpers';
 
 interface TransferState {
-    step: 'currency' | 'amount' | 'wallet' | 'confirm';
+    step: 'currency' | 'amount' | 'wallet' | 'confirm' | 
+          'offramp_quote' | 'offramp_signature' | 'offramp_wallet' | 
+          'offramp_customer_name' | 'offramp_business_name' | 
+          'offramp_email' | 'offramp_country' | 'offramp_confirm';
     data: {
         currency?: string;
         amount?: string;
         walletAddress?: string;
         purposeCode?: string;
-        recipientEmail?: string;
-        email?: string;
+        quotePayload?: string;
+        quoteSignature?: string;
+        preferredWalletId?: string;
+        customerData?: {
+            name: string;
+            businessName: string;
+            email: string;
+            country: string;
+        };
+        preferredBankAccountId?: string;
     };
 }
 
@@ -101,20 +112,26 @@ export class TransferController {
         try {
             switch (state.step) {
                 case 'currency':
-                    console.log('Handling currency input:', ctx.message.text);
                     await this.handleCurrency(ctx, ctx.message.text);
                     break;
                 case 'amount':
-                    console.log('Handling amount input:', ctx.message.text);
                     await this.handleAmount(ctx, ctx.message.text);
                     break;
                 case 'wallet':
-                    console.log('Handling wallet input:', ctx.message.text);
                     await this.handleWallet(ctx, ctx.message.text);
                     break;
                 case 'confirm':
-                    console.log('Handling confirmation:', ctx.message.text);
                     await this.handleConfirmation(ctx, ctx.message.text);
+                    break;
+                case 'offramp_quote':
+                case 'offramp_signature':
+                case 'offramp_wallet':
+                case 'offramp_customer_name':
+                case 'offramp_business_name':
+                case 'offramp_email':
+                case 'offramp_country':
+                case 'offramp_confirm':
+                    await this.handleOfframpFlow(ctx, ctx.message.text);
                     break;
                 default:
                     console.log('Unknown step:', state.step);
@@ -189,28 +206,95 @@ export class TransferController {
         console.log('=== HANDLE CURRENCY END ===\n');
     }
 
-    private async handleAmount(ctx: Context, amount: string): Promise<void> {
+    private async handleAmount(ctx: Context, text: string): Promise<void> {
         const userId = ctx.from?.id;
         if (!userId) return;
-
-        const numAmount = Number(amount);
-        if (isNaN(numAmount) || numAmount <= 0) {
-            await ctx.reply('❌ Please enter a valid positive number.');
-            return;
-        }
 
         const state = this.getState(userId);
         if (!state) return;
 
-        this.setState(userId, {
-            step: 'wallet',
-            data: {
-                ...state.data,
-                amount
-            }
-        });
+        const amount = text.trim();
+        if (isNaN(Number(amount)) || Number(amount) <= 0) {
+            await ctx.reply('Please enter a valid positive number');
+            return;
+        }
 
-        await ctx.reply('👛 Enter the destination wallet address:');
+        // Check if this is an offramp transfer
+        if (state.data.purposeCode === 'offramp') {
+            try {
+                const accessToken = await SessionManager.getToken(ctx);
+                if (!accessToken) return;
+
+                // Convert the amount to base units (e.g., 1 USDC -> 1000000000)
+                const baseAmount = TransferModel.convertToBaseUnit(amount, state.data.currency!);
+                console.log('🔄 Getting quote for amount:', amount, '(base units:', baseAmount, ')');
+
+                const quote = await TransferCrud.getOfframpQuote(accessToken, {
+                    amount: baseAmount,
+                    currency: state.data.currency!,
+                    destinationCurrency: 'USD',
+                    sourceCountry: 'none',
+                    destinationCountry: 'none',
+                    onlyRemittance: true,
+                    preferredBankAccountId: state.data.preferredBankAccountId
+                });
+
+                if (!quote.payload || !quote.signature) {
+                    throw new Error('Invalid quote response');
+                }
+
+                this.setState(userId, {
+                    step: 'offramp_wallet',
+                    data: {
+                        ...state.data,
+                        amount: baseAmount,  // Store the base unit amount
+                        quotePayload: quote.payload,
+                        quoteSignature: quote.signature
+                    }
+                });
+
+                // Use TransferModel to format the quote details
+                await ctx.reply(
+                    TransferModel.formatQuoteDetails(quote),
+                    {
+                        parse_mode: 'Markdown',
+                        ...Markup.keyboard([['Cancel']])
+                            .oneTime()
+                            .resize()
+                    }
+                );
+            } catch (error: any) {
+                console.error('Error getting quote:', error);
+                
+                let errorMessage = '❌ Failed to get quote.';
+                
+                // Check for KYC/B error
+                if (error?.data?.error === 'KYC/B is not approved' || 
+                    error?.message === 'KYC/B is not approved') {
+                    errorMessage = `❌ *KYC Verification Required*\n\n` +
+                        `To proceed with offramp transfers, you need to:\n\n` +
+                        `1️⃣ Complete KYC verification\n` +
+                        `2️⃣ Wait for approval\n` +
+                        `3️⃣ Try again once approved\n\n` +
+                        `Please contact support for assistance with KYC verification.`;
+                } else if (error?.message) {
+                    errorMessage = `❌ ${error.message}`;
+                }
+                
+                await ctx.reply(errorMessage, { parse_mode: 'Markdown' });
+                this.resetTransferState(userId);
+            }
+        } else {
+            // Regular transfer flow
+            this.setState(userId, {
+                step: 'wallet',
+                data: {
+                    ...state.data,
+                    amount
+                }
+            });
+            await ctx.reply('👛 Enter the destination wallet address:');
+        }
     }
 
     private async handleWallet(ctx: Context, wallet: string): Promise<void> {
@@ -472,5 +556,343 @@ export class TransferController {
                 .oneTime()
                 .resize()
         );
+    }
+
+    async handleOfframpTransferStart(ctx: Context): Promise<void> {
+        console.log('\n💱 Starting offramp transfer flow');
+        const userId = ctx.from?.id;
+        if (!userId) return;
+
+        try {
+            const accessToken = await this.checkAuth(ctx);
+            if (!accessToken) return;
+
+            this.setState(userId, {
+                step: 'currency',
+                data: { purposeCode: 'offramp' }
+            });
+
+            await ctx.reply(
+                '💱 *Offramp Transfer*\n\n' +
+                'Please select the currency you want to convert:',
+                {
+                    parse_mode: 'Markdown',
+                    ...Markup.keyboard([['USDC', 'USDT']])
+                        .oneTime()
+                        .resize()
+                }
+            );
+        } catch (error) {
+            console.error('❌ Error starting offramp transfer:', error);
+            await ctx.reply('Failed to start offramp transfer. Please try again.');
+        }
+    }
+
+    private async handleOfframpFlow(ctx: Context, text: string): Promise<void> {
+        const userId = ctx.from?.id;
+        if (!userId) return;
+
+        const state = this.getState(userId);
+        if (!state) return;
+
+        try {
+            switch (state.step) {
+                case 'currency':
+                    if (!['USDC', 'USDT'].includes(text.toUpperCase())) {
+                        await ctx.reply('Please select a valid currency (USDC or USDT)');
+                        return;
+                    }
+                    this.setState(userId, {
+                        step: 'amount',
+                        data: { ...state.data, currency: text.toUpperCase() }
+                    });
+                    await ctx.reply('Enter the amount you want to convert:');
+                    break;
+
+                case 'amount':
+                    const amount = text.trim();
+                    if (isNaN(Number(amount)) || Number(amount) <= 0) {
+                        await ctx.reply('Please enter a valid positive number');
+                        return;
+                    }
+
+                    // Get quote from API
+                    const accessToken = await SessionManager.getToken(ctx);
+                    if (!accessToken) return;
+
+                    try {
+                        const quote = await TransferCrud.getOfframpQuote(accessToken, {
+                            amount: TransferModel.convertToBaseUnit(amount, state.data.currency!),
+                            currency: state.data.currency!,
+                            destinationCurrency: 'USD',
+                            sourceCountry: 'none',
+                            destinationCountry: 'none',
+                            onlyRemittance: true,
+                            preferredBankAccountId: state.data.preferredBankAccountId
+                        });
+
+                        this.setState(userId, {
+                            step: 'offramp_wallet',
+                            data: {
+                                ...state.data,
+                                amount,
+                                quotePayload: quote.payload,
+                                quoteSignature: quote.signature
+                            }
+                        });
+
+                        await ctx.reply(
+                            '💱 *Quote Details*\n\n' +
+                            `Amount: ${quote.amount} ${quote.currency}\n` +
+                            `You'll receive: ${quote.destinationAmount} ${quote.destinationCurrency}\n` +
+                            `Rate: ${quote.rate}\n` +
+                            `Fee: ${quote.fee.amount} ${quote.fee.currency}\n` +
+                            `Expires: ${new Date(quote.expiresAt).toLocaleString()}\n\n` +
+                            'Please enter your wallet ID:',
+                            {
+                                parse_mode: 'Markdown',
+                                ...Markup.keyboard([['Cancel']])
+                                    .oneTime()
+                                    .resize()
+                            }
+                        );
+                    } catch (error: any) {
+                        console.error('Error getting quote:', error);
+                        
+                        let errorMessage = '❌ Failed to get quote.';
+                        
+                        if (error?.data?.error === 'KYC/B is not approved' || 
+                            error?.message === 'KYC/B is not approved') {
+                            errorMessage = `❌ *KYC Verification Required*\n\n` +
+                                `To proceed with offramp transfers, you need to:\n\n` +
+                                `1️⃣ Complete KYC verification\n` +
+                                `2️⃣ Wait for approval\n` +
+                                `3️⃣ Try again once approved\n\n` +
+                                `Please contact support for assistance with KYC verification.`;
+                        } else if (error?.message) {
+                            errorMessage = `❌ ${error.message}`;
+                        }
+                        
+                        await ctx.reply(errorMessage, { parse_mode: 'Markdown' });
+                        this.resetTransferState(userId);
+                        return;
+                    }
+                    break;
+
+                case 'offramp_wallet':
+                    this.setState(userId, {
+                        step: 'offramp_customer_name',
+                        data: {
+                            ...state.data,
+                            preferredWalletId: text,
+                            customerData: {
+                                name: '',
+                                businessName: '',
+                                email: '',
+                                country: ''
+                            }
+                        }
+                    });
+                    await ctx.reply('Please enter your full name:');
+                    break;
+
+                case 'offramp_customer_name':
+                    this.setState(userId, {
+                        step: 'offramp_business_name',
+                        data: {
+                            ...state.data,
+                            customerData: {
+                                ...state.data.customerData!,
+                                name: text
+                            }
+                        }
+                    });
+                    await ctx.reply('Please enter your business name:');
+                    break;
+
+                case 'offramp_business_name':
+                    this.setState(userId, {
+                        step: 'offramp_email',
+                        data: {
+                            ...state.data,
+                            customerData: {
+                                ...state.data.customerData!,
+                                businessName: text
+                            }
+                        }
+                    });
+                    await ctx.reply('Please enter your email address:');
+                    break;
+
+                case 'offramp_email':
+                    if (!this.isValidEmail(text)) {
+                        await ctx.reply('Please enter a valid email address');
+                        return;
+                    }
+                    this.setState(userId, {
+                        step: 'offramp_country',
+                        data: {
+                            ...state.data,
+                            customerData: {
+                                ...state.data.customerData!,
+                                email: text
+                            }
+                        }
+                    });
+                    await ctx.reply('Please enter your country code (e.g., US):');
+                    break;
+
+                case 'offramp_country':
+                    this.setState(userId, {
+                        step: 'offramp_confirm',
+                        data: {
+                            ...state.data,
+                            customerData: {
+                                ...state.data.customerData!,
+                                country: text.toUpperCase()
+                            }
+                        }
+                    });
+
+                    await ctx.reply(
+                        '📝 *Please confirm your offramp transfer details:*\n\n' +
+                        `Name: ${state.data.customerData!.name}\n` +
+                        `Business: ${state.data.customerData!.businessName}\n` +
+                        `Email: ${state.data.customerData!.email}\n` +
+                        `Country: ${text.toUpperCase()}\n` +
+                        `Wallet ID: ${state.data.preferredWalletId}\n\n` +
+                        'Type "confirm" to proceed or "cancel" to abort.',
+                        {
+                            parse_mode: 'Markdown',
+                            ...Markup.keyboard([['Confirm', 'Cancel']])
+                                .oneTime()
+                                .resize()
+                        }
+                    );
+                    break;
+
+                case 'offramp_confirm':
+                    if (text.toLowerCase() === 'confirm') {
+                        await this.processOfframpTransfer(ctx);
+                    } else if (text.toLowerCase() === 'cancel') {
+                        await ctx.reply('❌ Offramp transfer cancelled.');
+                        this.resetTransferState(userId);
+                    } else {
+                        await ctx.reply('Please type "confirm" or "cancel"');
+                    }
+                    break;
+            }
+        } catch (error) {
+            console.error('Error in offramp flow:', error);
+            await ctx.reply('❌ An error occurred. Please try again.');
+            this.resetTransferState(userId);
+        }
+    }
+
+    private async processOfframpTransfer(ctx: Context): Promise<void> {
+        const userId = ctx.from?.id;
+        if (!userId) return;
+
+        const state = this.getState(userId);
+        if (!state) return;
+
+        try {
+            const accessToken = await SessionManager.getToken(ctx);
+            if (!accessToken) return;
+
+            // Create offramp request
+            const offrampRequest: OfframpRequest = {
+                quotePayload: state.data.quotePayload!,
+                quoteSignature: state.data.quoteSignature!,
+                preferredWalletId: state.data.preferredWalletId!,
+                purposeCode: 'self',
+                sourceOfFunds: 'salary',
+                recipientRelationship: 'self',
+                customerData: state.data.customerData!,
+                // Optional fields
+                note: `Offramp transfer created via bot at ${new Date().toISOString()}`,
+                invoiceNumber: undefined, // Add if needed
+                invoiceUrl: undefined, // Add if needed
+                sourceOfFundsFile: undefined // Add if needed
+            };
+
+            // Show processing message
+            await ctx.reply('⏳ Processing your offramp transfer...');
+
+            // Create the transfer
+            const transfer = await TransferCrud.createOfframp(accessToken, offrampRequest);
+            
+            // Format and show success message
+            const model = new TransferModel(transfer);
+            await ctx.reply(
+                '✅ Offramp transfer created successfully!\n\n' + 
+                model.getTransferInfo(),
+                { parse_mode: 'Markdown' }
+            );
+
+            // Reset state
+            this.resetTransferState(userId);
+        } catch (error: any) {
+            console.error('Error processing offramp:', error);
+            
+            // Enhanced error handling
+            let errorMessage = '❌ Failed to create offramp transfer.';
+            if (error.message) {
+                if (typeof error.message === 'string') {
+                    errorMessage += `\n\nReason: ${error.message}`;
+                } else if (typeof error.message === 'object') {
+                    errorMessage += `\n\nReason: ${JSON.stringify(error.message)}`;
+                }
+            }
+            
+            await ctx.reply(errorMessage);
+            this.resetTransferState(userId);
+        }
+    }
+
+    private isValidEmail(email: string): boolean {
+        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+    }
+
+    private async handleOfframpQuote(ctx: Context, state: TransferState): Promise<void> {
+        try {
+            const accessToken = await SessionManager.getToken(ctx);
+            if (!accessToken) return;
+
+            const quote = await TransferCrud.getOfframpQuote(accessToken, {
+                amount: state.data.amount!,
+                currency: state.data.currency!,
+                destinationCurrency: 'USD',
+                sourceCountry: 'none',
+                destinationCountry: 'none',
+                onlyRemittance: true,
+                preferredBankAccountId: state.data.preferredBankAccountId
+            });
+
+            // Store quote data
+            this.setState(ctx.from!.id, {
+                step: 'confirm',
+                data: {
+                    ...state.data,
+                    quotePayload: quote.payload,
+                    quoteSignature: quote.signature
+                }
+            });
+
+            // Show quote details
+            await ctx.reply(
+                TransferModel.formatQuoteDetails(quote),
+                {
+                    parse_mode: 'Markdown',
+                    ...Markup.keyboard([['Confirm', 'Cancel']])
+                        .oneTime()
+                        .resize()
+                }
+            );
+        } catch (error) {
+            console.error('Error getting quote:', error);
+            await ctx.reply('❌ Failed to get quote. Please try again.');
+            this.resetTransferState(ctx.from!.id);
+        }
     }
 }

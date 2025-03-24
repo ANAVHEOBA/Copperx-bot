@@ -1,8 +1,12 @@
 import { Transfer } from './transfer.schema';
 import { BatchTransferResponse } from './transfer.schema';
+import { OfframpQuote } from './transfer.schema';
 
 export class TransferModel {
     private transfer: Transfer;
+
+    private static readonly USDC_DECIMALS = 9;
+    private static readonly USDT_DECIMALS = 6;
 
     constructor(transfer: Transfer) {
         this.transfer = transfer;
@@ -11,7 +15,7 @@ export class TransferModel {
     getTransferInfo(): string {
         return `🔄 Transfer Details:\n\n` +
             `ID: ${this.transfer.id}\n` +
-            `Status: ${this.getStatusEmoji()} ${this.transfer.status}\n` +
+            `Status: ${TransferModel.getStatusEmoji(this.transfer.status)} ${this.transfer.status}\n` +
             `Amount: ${this.transfer.amount} ${this.transfer.currency}\n` +
             `Fee: ${this.transfer.totalFee} ${this.transfer.feeCurrency}\n` +
             `Type: ${this.transfer.type}\n` +
@@ -21,8 +25,8 @@ export class TransferModel {
             `To: ${this.getDestinationInfo()}`;
     }
 
-    private getStatusEmoji(): string {
-        switch (this.transfer.status) {
+    private static getStatusEmoji(status: Transfer['status']): string {
+        switch (status) {
             case 'completed': return '✅';
             case 'pending': return '⏳';
             case 'failed': return '❌';
@@ -68,7 +72,7 @@ export class TransferModel {
 
     getTransferSummary(): string {
         return `🔄 *${this.transfer.type.toUpperCase()}* - ${this.transfer.id}\n` +
-            `Status: ${this.getStatusEmoji()} ${this.transfer.status}\n` +
+            `Status: ${TransferModel.getStatusEmoji(this.transfer.status)} ${this.transfer.status}\n` +
             `Amount: ${this.transfer.amount} ${this.transfer.currency}\n` +
             `Date: ${new Date(this.transfer.createdAt).toLocaleDateString()}`;
     }
@@ -87,5 +91,67 @@ export class TransferModel {
             `Minimum withdrawal amount: ${this.transfer.currency} 100\n` +
             `Your amount: ${this.transfer.currency} ${this.transfer.amount}\n\n` +
             `Please try again with a higher amount.`;
+    }
+
+    static formatQuoteDetails(quote: OfframpQuote): string {
+        const formattedAmount = this.formatFromBaseUnit(quote.amount, quote.currency);
+        const formattedFee = this.formatFromBaseUnit(quote.fee.amount, quote.fee.currency);
+        
+        return `💱 *Quote Details*\n\n` +
+            `Amount: ${formattedAmount} ${quote.currency}\n` +
+            `You'll receive: ${quote.destinationAmount} ${quote.destinationCurrency}\n` +
+            `Rate: ${quote.rate}\n` +
+            `Fee: ${formattedFee} ${quote.fee.currency}\n` +
+            `Expires: ${new Date(quote.expiresAt).toLocaleString()}\n\n` +
+            `Please confirm to proceed with the transfer.`;
+    }
+
+    static formatOfframpTransferInfo(transfer: Transfer): string {
+        return `💱 *Offramp Transfer Created*\n\n` +
+            `ID: \`${transfer.id}\`\n` +
+            `Status: ${TransferModel.getStatusEmoji(transfer.status)} ${transfer.status}\n` +
+            `Amount: ${transfer.amount} ${transfer.currency}\n` +
+            `You'll receive: ${transfer.amountSubtotal} ${transfer.destinationCurrency}\n` +
+            `Fee: ${transfer.totalFee} ${transfer.feeCurrency}\n` +
+            `Created: ${new Date(transfer.createdAt).toLocaleString()}\n\n` +
+            `_Please check your bank account for the deposit._`;
+    }
+
+    static convertToBaseUnit(amount: string, currency: string): string {
+        const numAmount = parseFloat(amount);
+        if (isNaN(numAmount)) return amount;
+
+        let decimals = 0;
+        switch (currency.toUpperCase()) {
+            case 'USDC':
+                decimals = this.USDC_DECIMALS;
+                break;
+            case 'USDT':
+                decimals = this.USDT_DECIMALS;
+                break;
+            default:
+                return amount;
+        }
+
+        return (numAmount * Math.pow(10, decimals)).toString();
+    }
+
+    static formatFromBaseUnit(amount: string, currency: string): string {
+        const numAmount = parseFloat(amount);
+        if (isNaN(numAmount)) return amount;
+
+        let decimals = 0;
+        switch (currency.toUpperCase()) {
+            case 'USDC':
+                decimals = this.USDC_DECIMALS;
+                break;
+            case 'USDT':
+                decimals = this.USDT_DECIMALS;
+                break;
+            default:
+                return amount;
+        }
+
+        return (numAmount / Math.pow(10, decimals)).toString();
     }
 } 

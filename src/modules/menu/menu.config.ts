@@ -39,6 +39,7 @@ export const MENUS = {
             { text: '👛 Send to Wallet', callback: 'transfer_wallet' },
             { text: '🏦 Bank Withdrawal', callback: 'transfer_bank' },
             { text: '📤 Batch Transfer', callback: 'transfer_batch' },
+            { text: '💱 Offramp', callback: 'transfer_offramp' },
             { text: '⬅️ Back to Main', callback: 'menu_main' }
         ]
     },

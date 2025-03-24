@@ -102,7 +102,12 @@ export interface OfframpRequest {
     quotePayload: string;
     quoteSignature: string;
     preferredWalletId: string;
-    customerData: CustomerData;
+    customerData: {
+        name: string;
+        businessName: string;
+        email: string;
+        country: string;
+    };
     sourceOfFundsFile?: string;
     note?: string;
 }
@@ -145,4 +150,30 @@ export interface TransferListResponse {
     count: number;
     hasMore: boolean;
     data: Transfer[];
+}
+
+export interface OfframpQuoteRequest {
+    amount: string;
+    currency: string;
+    destinationCurrency: string;
+    sourceCountry: string;
+    destinationCountry: string;
+    onlyRemittance: boolean;
+    preferredBankAccountId?: string;
+}
+
+export interface OfframpQuote {
+    id: string;
+    amount: string;
+    currency: string;
+    destinationAmount: string;
+    destinationCurrency: string;
+    rate: string;
+    fee: {
+        amount: string;
+        currency: string;
+    };
+    expiresAt: string;
+    payload: string;
+    signature: string;
 }
