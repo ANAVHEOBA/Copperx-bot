@@ -10,7 +10,7 @@ import { TransferRoute } from './modules/transfer/transfer.route';
 import { NotificationsService } from './modules/notifications/notifications.service';
 import { MenuService } from './modules/menu/menu.service';
 import { Message } from 'telegraf/types';
-import express from 'express';
+import express, { Request, Response } from 'express';
 
 export class App {
     private bot: Bot;
@@ -301,7 +301,6 @@ export class App {
             console.log('Running on Render:', process.env.RENDER === 'true');
             
             if (process.env.RENDER === 'true') {
-                // Webhook mode for Render
                 const webhookDomain = process.env.RENDER_EXTERNAL_URL;
                 const secretPath = '/webhook';
                 
@@ -309,31 +308,26 @@ export class App {
                     throw new Error('RENDER_EXTERNAL_URL is required for webhook mode');
                 }
 
-                // Set webhook
                 await this.bot.telegram.setWebhook(`${webhookDomain}${secretPath}`);
                 console.log('Webhook set:', `${webhookDomain}${secretPath}`);
 
-                // Start Express server
                 const app = express();
                 app.use(express.json());
                 
-                // Webhook handler
-                app.post(secretPath, (req, res) => {
+                // Add proper types to request and response
+                app.post(secretPath, (req: Request, res: Response) => {
                     this.bot.handleUpdate(req.body, res);
                 });
 
-                // Health check endpoint
-                app.get('/', (req, res) => {
+                app.get('/', (req: Request, res: Response) => {
                     res.send('Bot is running');
                 });
 
-                // Start server
                 const PORT = process.env.PORT || 3000;
                 app.listen(PORT, () => {
                     console.log(`Server running on port ${PORT}`);
                 });
             } else {
-                // Polling mode for local development
                 await this.bot.telegram.deleteWebhook();
                 await this.bot.launch();
                 console.log('Bot started in polling mode');
