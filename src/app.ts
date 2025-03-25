@@ -10,6 +10,7 @@ import { TransferRoute } from './modules/transfer/transfer.route';
 import { NotificationsService } from './modules/notifications/notifications.service';
 import { MenuService } from './modules/menu/menu.service';
 import { Message } from 'telegraf/types';
+import express from 'express';
 
 export class App {
     private bot: Bot;
@@ -299,37 +300,48 @@ export class App {
             console.log('Environment:', process.env.NODE_ENV);
             console.log('Running on Render:', process.env.RENDER === 'true');
             
-            // Add Render-specific webhook handling
             if (process.env.RENDER === 'true') {
+                // Webhook mode for Render
                 const webhookDomain = process.env.RENDER_EXTERNAL_URL;
-                if (webhookDomain) {
-                    await this.bot.telegram.setWebhook(`${webhookDomain}/webhook`);
-                    console.log('Webhook set for Render deployment');
+                const secretPath = '/webhook';
+                
+                if (!webhookDomain) {
+                    throw new Error('RENDER_EXTERNAL_URL is required for webhook mode');
                 }
+
+                // Set webhook
+                await this.bot.telegram.setWebhook(`${webhookDomain}${secretPath}`);
+                console.log('Webhook set:', `${webhookDomain}${secretPath}`);
+
+                // Start Express server
+                const app = express();
+                app.use(express.json());
+                
+                // Webhook handler
+                app.post(secretPath, (req, res) => {
+                    this.bot.handleUpdate(req.body, res);
+                });
+
+                // Health check endpoint
+                app.get('/', (req, res) => {
+                    res.send('Bot is running');
+                });
+
+                // Start server
+                const PORT = process.env.PORT || 3000;
+                app.listen(PORT, () => {
+                    console.log(`Server running on port ${PORT}`);
+                });
             } else {
+                // Polling mode for local development
                 await this.bot.telegram.deleteWebhook();
-                console.log('✅ Webhook deleted for local deployment');
+                await this.bot.launch();
+                console.log('Bot started in polling mode');
             }
 
             const botInfo = await this.bot.telegram.getMe();
             console.log('✅ Bot info:', botInfo);
-
-            // Fix launch options
-            await this.bot.launch({
-                allowedUpdates: [
-                    'message',
-                    'callback_query',
-                    'edited_message',
-                    'channel_post',
-                    'edited_channel_post',
-                    'inline_query',
-                    'chosen_inline_result',
-                    'poll',
-                    'poll_answer'
-                ]
-            });
             
-            console.log('✅ Bot launched successfully');
         } catch (error) {
             console.error('❌ Failed to start bot:', error);
             if (retryCount < this.MAX_RETRIES) {
