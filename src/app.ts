@@ -10,7 +10,8 @@ import { TransferRoute } from './modules/transfer/transfer.route';
 import { NotificationsService } from './modules/notifications/notifications.service';
 import { MenuService } from './modules/menu/menu.service';
 import { Message } from 'telegraf/types';
-import express, { Request, Response } from 'express';
+import express from 'express';
+import type { Request, Response } from 'express';
 
 export class App {
     private bot: Bot;

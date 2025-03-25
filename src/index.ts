@@ -5,6 +5,10 @@ import { SessionStore } from './utils/session-store';
 // Load environment variables
 dotenv.config();
 
+// Set environment variables if not set
+process.env.NODE_ENV = process.env.NODE_ENV || 'development';
+process.env.RENDER = process.env.RENDER || 'false';
+
 // Initialize session store
 SessionStore.initialize();
 
